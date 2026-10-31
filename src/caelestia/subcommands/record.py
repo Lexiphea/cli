@@ -11,6 +11,8 @@ from caelestia.utils.notify import close_notification, notify
 from caelestia.utils.paths import get_config, recording_notif_path, recording_path, recordings_dir
 
 RECORDER = "gpu-screen-recorder"
+# Recording at a high refresh rate (e.g. 280 Hz) makes huge files for no visible gain
+MAX_FPS = 60
 
 
 class Command:
@@ -55,11 +57,11 @@ class Command:
                 if self.intersects((monitor["x"], monitor["y"], monitor["width"], monitor["height"]), r):
                     rr = round(monitor["refreshRate"])
                     max_rr = max(max_rr, rr)
-            args += ["-f", str(max_rr)]
+            args += ["-f", str(min(max_rr, MAX_FPS))]
         else:
             focused_monitor = next(monitor for monitor in monitors if monitor["focused"])
             if focused_monitor:
-                args += [focused_monitor["name"], "-f", str(round(focused_monitor["refreshRate"]))]
+                args += [focused_monitor["name"], "-f", str(min(round(focused_monitor["refreshRate"]), MAX_FPS))]
 
         if self.args.sound:
             args += ["-a", "default_output"]
