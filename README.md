@@ -201,6 +201,7 @@ All configuration options are in `~/.config/caelestia/cli.json`.
         "enableTerm": true,
         "enableHypr": true,
         "enableDiscord": true,
+        "discordClients": ["Equicord", "Vencord", "BetterDiscord", "equibop", "vesktop", "legcord"],
         "enableSpicetify": true,
         "enablePandora": true,
         "enableFuzzel": true,

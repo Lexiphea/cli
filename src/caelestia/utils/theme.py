@@ -149,13 +149,16 @@ def apply_hypr(conf: str) -> None:
     atomic_write(config_dir / f"hypr/scheme/current.{ext}", conf)
 
 
+DISCORD_CLIENTS = ["Equicord", "Vencord", "BetterDiscord", "equibop", "vesktop", "legcord"]
+
+
 @log_exception
-def apply_discord(scss: str) -> None:
+def apply_discord(scss: str, clients: list[str]) -> None:
     with tempfile.TemporaryDirectory("w") as tmp_dir:
         (Path(tmp_dir) / "_colours.scss").write_text(scss)
         conf = subprocess.check_output(["sass", "-I", tmp_dir, templates_dir / "discord.scss"], text=True)
 
-    for client in "Equicord", "Vencord", "BetterDiscord", "equibop", "vesktop", "legcord":
+    for client in clients:
         atomic_write(config_dir / client / "themes/caelestia.theme.css", conf)
 
 
@@ -427,7 +430,7 @@ def apply_colours(colours: dict[str, str], mode: str) -> None:
             if check("enableHypr"):
                 apply_hypr(gen_lua(colours) if is_lua_config() else gen_conf(colours))
             if check("enableDiscord"):
-                apply_discord(gen_scss(colours))
+                apply_discord(gen_scss(colours), cfg.get("discordClients", DISCORD_CLIENTS))
             if check("enableSpicetify"):
                 apply_spicetify(colours, mode)
             if check("enablePandora"):
