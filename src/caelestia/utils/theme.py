@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from caelestia.utils.colour import get_dynamic_colours
@@ -203,11 +204,7 @@ def apply_htop(colours: dict[str, str]) -> None:
 
 def sync_papirus_colors(hex_color: str) -> None:
     """Sync Papirus folder icon colors using hue/saturation analysis"""
-    try:
-        result = subprocess.run(["which", "papirus-folders"], capture_output=True, check=False)
-        if result.returncode != 0:
-            return
-    except Exception:
+    if shutil.which("papirus-folders") is None:
         return
 
     papirus_paths = [
@@ -316,10 +313,13 @@ def apply_gtk(colours: dict[str, str], mode: str, icon_theme: str | None = None)
         atomic_write(gtk_config_dir / "gtk.css", gtk_template)
         atomic_write(gtk_config_dir / "thunar.css", thunar_template)
 
-    subprocess.run(["dconf", "write", "/org/gnome/desktop/interface/gtk-theme", "'adw-gtk3-dark'"])
-    subprocess.run(["dconf", "write", "/org/gnome/desktop/interface/color-scheme", f"'prefer-{mode}'"])
     gtk_icon_theme = icon_theme if icon_theme is not None else f"Papirus-{mode.capitalize()}"
-    subprocess.run(["dconf", "write", "/org/gnome/desktop/interface/icon-theme", f"'{gtk_icon_theme}'"])
+    # One dconf process for all three keys
+    subprocess.run(
+        ["dconf", "load", "/org/gnome/desktop/interface/"],
+        input=f"[/]\ngtk-theme='adw-gtk3-dark'\ncolor-scheme='prefer-{mode}'\nicon-theme='{gtk_icon_theme}'\n",
+        text=True,
+    )
 
     sync_papirus_colors(colours["primary"])
 
@@ -379,6 +379,7 @@ def apply_chromium(colours: dict[str, str]) -> None:
         )
 
 
+@log_exception
 def apply_zed(colours: dict[str, str], mode: str) -> None:
     theme_path = config_dir / "zed/themes/caelestia.json"
     # Zed's file watcher does not detect changes through symlinks,
@@ -425,38 +426,41 @@ def apply_colours(colours: dict[str, str], mode: str) -> None:
             def check(key: str) -> bool:
                 return cfg[key] if key in cfg else True
 
-            if check("enableTerm"):
-                apply_terms(gen_sequences(colours))
-            if check("enableHypr"):
-                apply_hypr(gen_lua(colours) if is_lua_config() else gen_conf(colours))
-            if check("enableDiscord"):
-                apply_discord(gen_scss(colours), cfg.get("discordClients", DISCORD_CLIENTS))
-            if check("enableSpicetify"):
-                apply_spicetify(colours, mode)
-            if check("enablePandora"):
-                apply_pandora(colours, mode)
-            if check("enableFuzzel"):
-                apply_fuzzel(colours)
-            if check("enableBtop"):
-                apply_btop(colours)
-            if check("enableNvtop"):
-                apply_nvtop(colours)
-            if check("enableHtop"):
-                apply_htop(colours)
-            icon_theme = cfg.get(f"iconTheme{mode.capitalize()}") or cfg.get("iconTheme")
-            if check("enableGtk"):
-                apply_gtk(colours, mode, icon_theme)
-            if check("enableQt"):
-                apply_qt(colours, mode, icon_theme)
-            if check("enableWarp"):
-                apply_warp(colours, mode)
-            if check("enableChromium"):
-                apply_chromium(colours)
-            if check("enableZed"):
-                apply_zed(colours, mode)
-            if check("enableCava"):
-                apply_cava(colours)
-            apply_user_templates(colours, mode)
+            # Each app's theme is independent and mostly waits on fsync or a subprocess, so apply them at once.
+            # Every apply_*() logs its own errors, so one failing app doesn't stop the rest
+            with ThreadPoolExecutor() as pool:
+                if check("enableTerm"):
+                    pool.submit(apply_terms, gen_sequences(colours))
+                if check("enableHypr"):
+                    pool.submit(apply_hypr, gen_lua(colours) if is_lua_config() else gen_conf(colours))
+                if check("enableDiscord"):
+                    pool.submit(apply_discord, gen_scss(colours), cfg.get("discordClients", DISCORD_CLIENTS))
+                if check("enableSpicetify"):
+                    pool.submit(apply_spicetify, colours, mode)
+                if check("enablePandora"):
+                    pool.submit(apply_pandora, colours, mode)
+                if check("enableFuzzel"):
+                    pool.submit(apply_fuzzel, colours)
+                if check("enableBtop"):
+                    pool.submit(apply_btop, colours)
+                if check("enableNvtop"):
+                    pool.submit(apply_nvtop, colours)
+                if check("enableHtop"):
+                    pool.submit(apply_htop, colours)
+                icon_theme = cfg.get(f"iconTheme{mode.capitalize()}") or cfg.get("iconTheme")
+                if check("enableGtk"):
+                    pool.submit(apply_gtk, colours, mode, icon_theme)
+                if check("enableQt"):
+                    pool.submit(apply_qt, colours, mode, icon_theme)
+                if check("enableWarp"):
+                    pool.submit(apply_warp, colours, mode)
+                if check("enableChromium"):
+                    pool.submit(apply_chromium, colours)
+                if check("enableZed"):
+                    pool.submit(apply_zed, colours, mode)
+                if check("enableCava"):
+                    pool.submit(apply_cava, colours)
+                pool.submit(apply_user_templates, colours, mode)
 
             if post_hook := cfg.get("postHook"):
                 scheme = get_scheme()

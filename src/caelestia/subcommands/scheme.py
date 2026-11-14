@@ -9,7 +9,6 @@ from caelestia.utils.scheme import (
     get_scheme_names,
     scheme_variants,
 )
-from caelestia.utils.theme import apply_colours
 
 
 class Set:
@@ -19,6 +18,8 @@ class Set:
         self.args = args
 
     def run(self) -> None:
+        from caelestia.utils.theme import apply_colours
+
         scheme = get_scheme()
 
         if self.args.notify:

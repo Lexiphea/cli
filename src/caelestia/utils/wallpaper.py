@@ -6,11 +6,6 @@ from argparse import Namespace
 from pathlib import Path
 from typing import cast
 
-from materialyoucolor.hct import Hct
-from materialyoucolor.utils.color_utils import argb_from_rgb
-from PIL import Image
-
-from caelestia.utils.colourfulness import get_variant
 from caelestia.utils.hypr import message
 from caelestia.utils.material import get_colours_for_image
 from caelestia.utils.paths import (
@@ -22,7 +17,6 @@ from caelestia.utils.paths import (
     wallpapers_cache_dir,
 )
 from caelestia.utils.scheme import Scheme, get_scheme
-from caelestia.utils.theme import apply_colours
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".gif"]
 VIDEO_EXTENSIONS = [".mp4", ".mkv", ".webm", ".mov", ".avi"]
@@ -63,6 +57,8 @@ def get_size(wall: Path) -> tuple[int, int]:
             return height, width
         return width, height
 
+    from PIL import Image
+
     with Image.open(wall) as img:
         return img.size
 
@@ -102,6 +98,8 @@ def get_thumb(wall: Path, cache: Path) -> Path:
     thumb = cache / "thumbnail.jpg"
 
     if not thumb.exists():
+        from PIL import Image
+
         with Image.open(wall) as img:
             img = img.convert("RGB")
             img.thumbnail((128, 128), Image.Resampling.NEAREST)
@@ -118,6 +116,12 @@ def get_smart_opts(wall: Path, cache: Path) -> dict:
         return json.loads(opts_cache.read_text())
     except (IOError, json.JSONDecodeError):
         pass
+
+    from materialyoucolor.hct import Hct
+    from materialyoucolor.utils.color_utils import argb_from_rgb
+    from PIL import Image
+
+    from caelestia.utils.colourfulness import get_variant
 
     opts = {}
 
@@ -144,7 +148,7 @@ def get_colours_for_wall(wall: Path | str, no_smart: bool) -> None:
     cache = wallpapers_cache_dir / compute_hash(wall)
 
     if is_animated(wall):
-        wall = extract_first_frame(wall)
+        wall = extract_first_frame(wall, cache)
 
     name = "dynamic"
 
@@ -169,8 +173,8 @@ def get_colours_for_wall(wall: Path | str, no_smart: bool) -> None:
     }
 
 
-def extract_first_frame(wall: Path) -> Path:
-    cache = wallpapers_cache_dir / compute_hash(wall)
+def extract_first_frame(wall: Path, cache: Path | None = None) -> Path:
+    cache = cache or wallpapers_cache_dir / compute_hash(wall)
     output_path = cache / "first_frame.png"
 
     if output_path.exists():
@@ -186,6 +190,8 @@ def extract_first_frame(wall: Path) -> Path:
         )
         return output_path
 
+    from PIL import Image
+
     with Image.open(wall) as img:
         try:
             img.seek(0)
@@ -199,6 +205,8 @@ def extract_first_frame(wall: Path) -> Path:
 
 
 def set_wallpaper(wall: Path, no_smart: bool) -> None:
+    from caelestia.utils.theme import apply_colours
+
     # Make path absolute
     wall = Path(wall).resolve()
 

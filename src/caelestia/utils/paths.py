@@ -48,13 +48,8 @@ recording_notif_path: Path = c_state_dir / "record/notifid.txt"
 
 
 def compute_hash(path: Path | str) -> str:
-    sha = hashlib.sha256()
-
     with open(path, "rb") as f:
-        while chunk := f.read(8192):
-            sha.update(chunk)
-
-    return sha.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def atomic_write(path: Path, content: str) -> None:

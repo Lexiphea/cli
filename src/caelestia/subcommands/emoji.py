@@ -1,7 +1,6 @@
 import json
 import subprocess
 from argparse import Namespace
-from urllib.request import urlopen
 
 from caelestia.utils.paths import cli_data_dir
 
@@ -50,6 +49,8 @@ class Command:
             "— em dash",
             "󰖳 windows super key",
         ]
+
+        from urllib.request import urlopen
 
         # Fetch emojis
         with urlopen(
