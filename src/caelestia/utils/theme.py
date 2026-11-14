@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from pathlib import Path
 
 from caelestia.utils.colour import get_dynamic_colours
@@ -426,41 +426,48 @@ def apply_colours(colours: dict[str, str], mode: str) -> None:
             def check(key: str) -> bool:
                 return cfg[key] if key in cfg else True
 
-            # Each app's theme is independent and mostly waits on fsync or a subprocess, so apply them at once.
+            # Each app's theme is independent and some wait on a subprocess, so apply them at once.
             # Every apply_*() logs its own errors, so one failing app doesn't stop the rest
-            with ThreadPoolExecutor() as pool:
-                if check("enableTerm"):
-                    pool.submit(apply_terms, gen_sequences(colours))
-                if check("enableHypr"):
-                    pool.submit(apply_hypr, gen_lua(colours) if is_lua_config() else gen_conf(colours))
-                if check("enableDiscord"):
-                    pool.submit(apply_discord, gen_scss(colours), cfg.get("discordClients", DISCORD_CLIENTS))
-                if check("enableSpicetify"):
-                    pool.submit(apply_spicetify, colours, mode)
-                if check("enablePandora"):
-                    pool.submit(apply_pandora, colours, mode)
-                if check("enableFuzzel"):
-                    pool.submit(apply_fuzzel, colours)
-                if check("enableBtop"):
-                    pool.submit(apply_btop, colours)
-                if check("enableNvtop"):
-                    pool.submit(apply_nvtop, colours)
-                if check("enableHtop"):
-                    pool.submit(apply_htop, colours)
-                icon_theme = cfg.get(f"iconTheme{mode.capitalize()}") or cfg.get("iconTheme")
-                if check("enableGtk"):
-                    pool.submit(apply_gtk, colours, mode, icon_theme)
-                if check("enableQt"):
-                    pool.submit(apply_qt, colours, mode, icon_theme)
-                if check("enableWarp"):
-                    pool.submit(apply_warp, colours, mode)
-                if check("enableChromium"):
-                    pool.submit(apply_chromium, colours)
-                if check("enableZed"):
-                    pool.submit(apply_zed, colours, mode)
-                if check("enableCava"):
-                    pool.submit(apply_cava, colours)
-                pool.submit(apply_user_templates, colours, mode)
+            threads = []
+
+            def run(fn, *args) -> None:
+                threads.append(threading.Thread(target=fn, args=args))
+                threads[-1].start()
+
+            if check("enableTerm"):
+                run(apply_terms, gen_sequences(colours))
+            if check("enableHypr"):
+                run(apply_hypr, gen_lua(colours) if is_lua_config() else gen_conf(colours))
+            if check("enableDiscord"):
+                run(apply_discord, gen_scss(colours), cfg.get("discordClients", DISCORD_CLIENTS))
+            if check("enableSpicetify"):
+                run(apply_spicetify, colours, mode)
+            if check("enablePandora"):
+                run(apply_pandora, colours, mode)
+            if check("enableFuzzel"):
+                run(apply_fuzzel, colours)
+            if check("enableBtop"):
+                run(apply_btop, colours)
+            if check("enableNvtop"):
+                run(apply_nvtop, colours)
+            if check("enableHtop"):
+                run(apply_htop, colours)
+            icon_theme = cfg.get(f"iconTheme{mode.capitalize()}") or cfg.get("iconTheme")
+            if check("enableGtk"):
+                run(apply_gtk, colours, mode, icon_theme)
+            if check("enableQt"):
+                run(apply_qt, colours, mode, icon_theme)
+            if check("enableWarp"):
+                run(apply_warp, colours, mode)
+            if check("enableChromium"):
+                run(apply_chromium, colours)
+            if check("enableZed"):
+                run(apply_zed, colours, mode)
+            if check("enableCava"):
+                run(apply_cava, colours)
+            run(apply_user_templates, colours, mode)
+            for thread in threads:
+                thread.join()
 
             if post_hook := cfg.get("postHook"):
                 scheme = get_scheme()

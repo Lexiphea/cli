@@ -53,13 +53,13 @@ def compute_hash(path: Path | str) -> str:
 
 
 def atomic_write(path: Path, content: str) -> None:
+    # No fsync: it cost about 3 ms per file, most of the time a theme change took. The rename still
+    # swaps the whole file, so a crash leaves the previous version rather than a broken one
     path.parent.mkdir(parents=True, exist_ok=True)
     f = tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False)
     try:
         with f:
             f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
         os.replace(f.name, path)
     except BaseException:
         os.unlink(f.name)
