@@ -5,7 +5,6 @@ from typing import Any
 
 socket_base = f"{os.getenv('XDG_RUNTIME_DIR')}/hypr/{os.getenv('HYPRLAND_INSTANCE_SIGNATURE')}"
 socket_path = f"{socket_base}/.socket.sock"
-socket2_path = f"{socket_base}/.socket2.sock"
 
 _lua_config_cache: bool | None = None
 
@@ -42,30 +41,3 @@ def is_lua_config() -> bool:
     except Exception:
         _lua_config_cache = False
         return False
-
-
-DISPATCHER_MAP_LUA = {
-    "togglespecialworkspace": lambda *a: (
-        f'hl.dsp.workspace.toggle_special("{a[0]}")' if a else "hl.dsp.workspace.toggle_special()"
-    ),
-    "movetoworkspacesilent": lambda *a: (
-        f'hl.dsp.window.move({{window = "address:{a[0].split(",")[1].replace("address:", "")}", workspace = "{a[0].split(",")[0]}", follow = false}})'
-    ),
-    "exec": lambda *a: 'hl.dsp.exec_cmd("' + " ".join(a).replace("\\", "\\\\").replace('"', '\\"') + '")',
-}
-
-
-def dispatch(dispatcher: str, *args: str) -> bool:
-    if is_lua_config() and dispatcher in DISPATCHER_MAP_LUA:
-        lua_dispatch = DISPATCHER_MAP_LUA[dispatcher](*args)
-        return message(f"dispatch {lua_dispatch}", is_json=False) == "ok"
-    return message(f"dispatch {dispatcher} {' '.join(map(str, args))}".rstrip(), is_json=False) == "ok"
-
-
-def batch(*msgs: str, is_json: bool = False) -> str | dict[str, Any]:
-    formatted_msgs = msgs
-
-    if is_json:
-        formatted_msgs = [f"j/{m.strip()}" for m in msgs]
-
-    return message(f"[[BATCH]]{';'.join(formatted_msgs)}", is_json=False)

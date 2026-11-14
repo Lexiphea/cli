@@ -1,13 +1,7 @@
 import argparse
-import sys
-from typing import TYPE_CHECKING
 
-from caelestia.utils.dots.packages import AUR_HELPERS
 from caelestia.utils.paths import wallpaper_path_path, wallpapers_dir
 from caelestia.utils.scheme import get_scheme_names, scheme_variants
-
-if TYPE_CHECKING:
-    from caelestia.utils.dots.manifest import Manifest
 
 
 def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
@@ -29,11 +23,6 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     shell_parser.add_argument("-l", "--log", action="store_true", help="print the shell log")
     shell_parser.add_argument("-k", "--kill", action="store_true", help="kill the shell")
     shell_parser.add_argument("--log-rules", metavar="RULES", help="log rules to apply")
-
-    # Create parser for toggle opts
-    toggle_parser = command_parser.add_parser("toggle", help="toggle a special workspace")
-    toggle_parser.set_defaults(cmd="toggle.Command")
-    toggle_parser.add_argument("workspace", help="the workspace to toggle")
 
     # Create parser for scheme opts
     scheme_parser = command_parser.add_parser("scheme", help="manage the colour scheme")
@@ -62,14 +51,6 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     set_parser.add_argument("-m", "--mode", choices=["dark", "light"], help="the mode to switch to")
     set_parser.add_argument("-v", "--variant", choices=scheme_variants, help="the variant to switch to")
 
-    # Create parser for screenshot opts
-    screenshot_parser = command_parser.add_parser("screenshot", help="take a screenshot")
-    screenshot_parser.set_defaults(cmd="screenshot.Command")
-    screenshot_parser.add_argument("-r", "--region", nargs="?", const="slurp", help="take a screenshot of a region")
-    screenshot_parser.add_argument(
-        "-f", "--freeze", action="store_true", help="freeze the screen while selecting a region"
-    )
-
     # Create parser for record opts
     record_parser = command_parser.add_parser("record", help="start a screen recording")
     record_parser.set_defaults(cmd="record.Command")
@@ -77,17 +58,6 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     record_parser.add_argument("-s", "--sound", action="store_true", help="record audio")
     record_parser.add_argument("-p", "--pause", action="store_true", help="pause/resume the recording")
     record_parser.add_argument("-c", "--clipboard", action="store_true", help="copy recording path to clipboard")
-
-    # Create parser for clipboard opts
-    clipboard_parser = command_parser.add_parser("clipboard", help="open clipboard history")
-    clipboard_parser.set_defaults(cmd="clipboard.Command")
-    clipboard_parser.add_argument("-d", "--delete", action="store_true", help="delete from clipboard history")
-
-    # Create parser for emoji-picker opts
-    emoji_parser = command_parser.add_parser("emoji", help="emoji/glyph utilities")
-    emoji_parser.set_defaults(cmd="emoji.Command")
-    emoji_parser.add_argument("-p", "--picker", action="store_true", help="open the emoji/glyph picker")
-    emoji_parser.add_argument("-f", "--fetch", action="store_true", help="fetch emoji/glyph data from remote")
 
     # Create parser for wallpaper opts
     wallpaper_parser = command_parser.add_parser("wallpaper", help="manage the wallpaper")
@@ -113,59 +83,7 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
         help="do not automatically change the scheme mode based on wallpaper colour",
     )
 
-    # Create parser for resizer opts
-    resizer_parser = command_parser.add_parser("resizer", help="window resizer daemon")
-    resizer_parser.set_defaults(cmd="resizer.Command")
-    resizer_parser.add_argument("-d", "--daemon", action="store_true", help="start the resizer daemon")
-    resizer_parser.add_argument(
-        "pattern",
-        nargs="?",
-        help="pattern to match against windows ('active' for current window only, 'pip' for quick pip mode)",
-    )
-    resizer_parser.add_argument(
-        "match_type",
-        nargs="?",
-        metavar="match_type",
-        choices=["titleContains", "titleExact", "titleRegex", "initialTitle"],
-        help="type of pattern matching (titleContains,titleExact,titleRegex,initialTitle)",
-    )
-    resizer_parser.add_argument("width", nargs="?", help="width to resize to")
-    resizer_parser.add_argument("height", nargs="?", help="height to resize to")
-    resizer_parser.add_argument("actions", nargs="?", help="comma-separated actions to apply (float,center,pip)")
-
-    # Create parser for install opts
-    install_parser = command_parser.add_parser(
-        "install",
-        help="install the Caelestia dotfiles",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    install_parser.set_defaults(cmd="install.Command")
-    install_parser.add_argument("--aur-helper", choices=AUR_HELPERS, help="the AUR helper to use")
-    install_parser.add_argument(
-        "--enable-components", metavar="LIST", help="comma-separated list of components to enable"
-    )
-    install_parser.add_argument(
-        "--disable-components", metavar="LIST", help="comma-separated list of components to disable"
-    )
-    install_parser.add_argument("--noconfirm", action="store_true", help="use defaults for all prompts")
-    _set_install_epilog(install_parser)
-
-    # Create parser for update opts
-    update_parser = command_parser.add_parser("update", help="update the Caelestia dotfiles")
-    update_parser.set_defaults(cmd="update.Command")
-    update_parser.add_argument("--aur-helper", choices=AUR_HELPERS, help="the AUR helper to use")
-    update_parser.add_argument("--noconfirm", action="store_true", help="use defaults for all prompts")
-
     return parser, parser.parse_args()
-
-
-def _set_install_epilog(install_parser: argparse.ArgumentParser) -> None:
-    """Add components if using install subcommand"""
-
-    if len(sys.argv) > 1 and sys.argv[1] == "install":
-        manifest = _load_install_manifest()
-        if manifest is not None and manifest.components:
-            install_parser.epilog = _components_epilog(manifest)
 
 
 def _current_wallpaper() -> str | None:
@@ -173,32 +91,3 @@ def _current_wallpaper() -> str | None:
         return wallpaper_path_path.read_text()
     except OSError:
         return None
-
-
-def _load_install_manifest() -> "Manifest | None":
-    from caelestia.utils.dots.source import DotsSource
-    from caelestia.utils.io import warn
-
-    source = DotsSource()
-    try:
-        source.ensure()
-        return source.manifest_at(source.remote_ref)
-    except Exception as e:
-        warn(f"failed to load manifest from dots repo ({e})\n", prefix=False)
-        return None
-
-
-def _components_epilog(manifest: "Manifest") -> str:
-    def e(*v: int) -> str:
-        return f"\033[{';'.join(str(c) for c in v)}m"
-
-    def b(c: int) -> str:
-        return e(1, c)
-
-    reset = e(0)
-
-    width = max(len(name) for name in manifest.components)
-    lines = [f"{b(34)}available components (for --enable-components / --disable-components):{reset}"]
-    for name, comp in manifest.components.items():
-        lines.append(f"  {b(32)}{name:<{width}}{reset}\t{'(default)' if comp.default else '(off)'}")
-    return "\n".join(lines)

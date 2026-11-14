@@ -5,15 +5,11 @@ The main control script for the Caelestia dotfiles.
 <details><summary id="dependencies">External dependencies</summary>
 
 - [`libnotify`](https://gitlab.gnome.org/GNOME/libnotify) - sending notifications
-- [`swappy`](https://github.com/jtheoof/swappy) - screenshot editor
-- [`grim`](https://gitlab.freedesktop.org/emersion/grim) - taking screenshots
 - [`dart-sass`](https://github.com/sass/dart-sass) - discord theming
 - [`wl-clipboard`](https://github.com/bugaevc/wl-clipboard) - copying to clipboard
-- [`slurp`](https://github.com/emersion/slurp) - selecting an area
+- [`slurp`](https://github.com/emersion/slurp) - selecting a recording area
 - [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about) - screen recording
 - `glib2` - closing notifications
-- [`cliphist`](https://github.com/sentriz/cliphist) - clipboard history
-- [`fuzzel`](https://codeberg.org/dnkl/fuzzel) - clipboard history/emoji picker
 - [`ffmpeg`](https://ffmpeg.org) - video wallpaper detection and colour generation
 
 </details>
@@ -77,7 +73,7 @@ Install all [dependencies](#dependencies), then install
 e.g. via an AUR helper (yay)
 
 ```sh
-yay -S libnotify swappy grim dart-sass wl-clipboard slurp gpu-screen-recorder ffmpeg glib2 cliphist fuzzel python-build python-installer python-hatch python-hatch-vcs
+yay -S libnotify dart-sass wl-clipboard slurp gpu-screen-recorder ffmpeg glib2 python-build python-installer python-hatch python-hatch-vcs
 ```
 
 Now, clone the repo, `cd` into it, build the wheel via `python -m build --wheel`
@@ -151,16 +147,9 @@ subcommands:
 
   COMMAND        the subcommand to run
     shell        start or message the shell
-    toggle       toggle a special workspace
     scheme       manage the colour scheme
-    screenshot   take a screenshot
     record       start a screen recording
-    clipboard    open clipboard history
-    emoji        emoji/glyph utilities
     wallpaper    manage the wallpaper
-    resizer      window resizer daemon
-    install      install the Caelestia dotfiles
-    update       update the Caelestia dotfiles
 ```
 
 ### User templates
@@ -219,53 +208,6 @@ All configuration options are in `~/.config/caelestia/cli.json`.
         "iconThemeLight": "Papirus-Light",
         "iconThemeDark": "Papirus-Dark",
         "postHook": "echo $SCHEME_NAME $SCHEME_FLAVOUR $SCHEME_MODE $SCHEME_VARIANT $SCHEME_COLOURS"
-    },
-    "toggles": {
-        "communication": {
-            "discord": {
-                "enable": true,
-                "match": [{ "class": "discord" }],
-                "command": ["discord"],
-                "move": true
-            },
-            "whatsapp": {
-                "enable": true,
-                "match": [{ "class": "whatsapp" }],
-                "move": true
-            }
-        },
-        "music": {
-            "spotify": {
-                "enable": true,
-                "match": [{ "class": "Spotify" }, { "initialTitle": "Spotify" }, { "initialTitle": "Spotify Free" }],
-                "command": ["spicetify", "watch", "-s"],
-                "move": true
-            },
-            "feishin": {
-                "enable": true,
-                "match": [{ "class": "feishin" }],
-                "move": true
-            }
-        },
-        "sysmon": {
-            "btop": {
-                "enable": true,
-                "match": [{ "class": "btop", "title": "btop", "workspace": { "name": "special:sysmon" } }],
-                "command": ["foot", "-a", "btop", "-T", "btop", "fish", "-C", "exec btop"]
-            }
-        },
-        "todo": {
-            "todoist": {
-                "enable": true,
-                "match": [{ "class": "Todoist" }],
-                "command": ["todoist"],
-                "move": true
-            }
-        }
-    },
-    "dots": {
-        "url": "https://github.com/caelestia-dots/caelestia.git",
-        "branch": "main"
     }
 }
 ```

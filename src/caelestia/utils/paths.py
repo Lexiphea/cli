@@ -15,7 +15,6 @@ pictures_dir: Path = Path(os.getenv("XDG_PICTURES_DIR", Path.home() / "Pictures"
 videos_dir: Path = Path(os.getenv("XDG_VIDEOS_DIR", Path.home() / "Videos"))
 
 c_config_dir: Path = config_dir / "caelestia"
-c_data_dir: Path = data_dir / "caelestia"
 c_state_dir: Path = state_dir / "caelestia"
 c_cache_dir: Path = cache_dir / "caelestia"
 
@@ -24,10 +23,6 @@ cli_data_dir: Path = Path(__file__).parent.parent / "data"
 templates_dir: Path = cli_data_dir / "templates"
 user_templates_dir: Path = c_config_dir / "templates"
 theme_dir: Path = c_state_dir / "theme"
-
-config_backup_dir: Path = config_dir.parent / f"{config_dir.name}.bak"
-dots_dir: Path = c_state_dir / "dots"
-dots_state_path: Path = c_state_dir / "dots-state.json"
 
 scheme_path: Path = c_state_dir / "scheme.json"
 scheme_data_dir: Path = cli_data_dir / "schemes"
@@ -38,9 +33,6 @@ wallpaper_path_path: Path = c_state_dir / "wallpaper/path.txt"
 wallpaper_link_path: Path = c_state_dir / "wallpaper/current"
 wallpaper_thumbnail_path: Path = c_state_dir / "wallpaper/thumbnail.jpg"
 wallpapers_cache_dir: Path = c_cache_dir / "wallpapers"
-
-screenshots_dir: Path = Path(os.getenv("CAELESTIA_SCREENSHOTS_DIR", pictures_dir / "Screenshots"))
-screenshots_cache_dir: Path = c_cache_dir / "screenshots"
 
 recordings_dir: Path = Path(os.getenv("CAELESTIA_RECORDINGS_DIR", videos_dir / "Recordings"))
 recording_path: Path = c_state_dir / "record/recording.mp4"
