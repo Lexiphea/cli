@@ -1,14 +1,13 @@
 # caelestia CLI (Rust) blueprint
 
-Rust port of the caelestia CLI's `scheme` and `wallpaper` commands, installed as `caelestia`.
+Rust port of the caelestia CLI, installed as `caelestia`. The Python CLI is gone.
 Follows the applicable stages of Google's `migrate-to-rust` skill; see "Skill stages" at the end.
 
-**Current state.** Rust runs every command: schemes, wallpapers and app themes, plus `shell`,
-`record`, `--version` and `-h`. Python's versions are deleted. The only Python left is
-`caelestia-py _gen`, which fills colour caches on a miss (first frame, thumbnail, `smart.json`,
-scheme JSON) without touching state or themes. Sections 3 to 6 describe how the port was built and
-checked against Python, before that switch; `parity.sh` is retired and `test.sh` replaces it.
-Changes since the switch:
+**Current state.** Rust runs every command (schemes, wallpapers, app themes, `shell`, `record`) and
+fills the colour caches itself (first frame, thumbnail, `smart.json`, best colour, scheme JSON).
+Only `src/caelestia/data` (templates and static schemes) is left of the Python tree; the binary
+reads it from this checkout at runtime. Sections 3 to 6 describe how the port was built and checked
+against Python; `parity.sh` is retired and `test.sh` replaces it. Changes since the switch:
 
 - Odd command lines (`-h`, abbreviations, missing values), odd state and config, and "no Hyprland"
   are now Rust errors (exit 2 for usage, 1 otherwise) instead of fallbacks.
@@ -20,6 +19,9 @@ Changes since the switch:
 - `shell` and `record` call `qs`, `gpu-screen-recorder` and friends directly, as Python did.
   Failures are short `caelestia: ...` errors instead of tracebacks, and `record -r` passes slurp's
   region without its trailing newline.
+- Colours come from the `material-colors` crate, not Python's `materialyoucolor`. They are close,
+  not identical (see "Colour generation" below). Caches Python wrote (`score.json`, scheme JSON) are
+  reused, so wallpapers cached before the switch keep their colours.
 
 ## 1. Audit and baseline
 
@@ -61,7 +63,8 @@ Latent bugs found in the Python (ported as-is, not fixed):
 ## 2. Architecture and mapping
 
 One binary crate, `rs/` (edition 2024). Deps: `serde_json` (`preserve_order`, parsing only),
-`sha2` (SHA-NI file hashing for cache keys), `imagesize` (image headers for the `-r` size filter).
+`sha2` (SHA-NI file hashing for cache keys), `imagesize` (image headers for the `-r` size filter),
+`image` (decoding, thumbnails) and `material-colors` (quantizer, scoring, dynamic schemes).
 No clap (hand-rolled argv, about 100 lines). `unsafe`: only `setsid()` (`util::new_session`) for
 the detached papirus-folders, recorder and xdg-open calls. The flock uses std's `File::lock`.
 
@@ -71,8 +74,8 @@ the detached papirus-folders, recorder and xdg-open calls. The flock uses std's 
 | `subcommands/shell.py`, `subcommands/record.py` | `shell.rs`, `record.rs` |
 | `utils/paths.py` | `util.rs::Paths`, `atomic_write`, `hash_file` |
 | `utils/scheme.py::Scheme` + `subcommands/scheme.py` | `scheme.rs` |
-| `utils/material/__init__.py` (cache read only) | `scheme.rs::Ctx::image_colours` |
-| `utils/wallpaper.py` + `subcommands/wallpaper.py` | `wallpaper.rs` |
+| `utils/material/` (generator, score) | `colours.rs`, called from `scheme.rs::Ctx::image_colours` |
+| `utils/wallpaper.py` + `subcommands/wallpaper.py` + `utils/colourfulness.py` | `wallpaper.rs` |
 | `utils/theme.py`, `utils/colour.py` | `theme.rs` |
 | `utils/hypr.py` (`message`, `is_lua_config`), `utils/notify.py` | `util.rs` |
 | `json.dumps` | `util.rs::dumps` (Python separators, `ensure_ascii`) |
@@ -149,6 +152,22 @@ PGO (`-Cprofile-generate`, 30 representative runs, `llvm-profdata merge`, `-Cpro
 measurable gain. Two interleaved rounds of 31 runs each landed within ±0.2 ms of the plain build
 on every command, about the run-to-run noise. Startup and external processes dominate, so the
 plain release build is kept and PGO isn't wired in.
+
+## Colour generation
+
+Checked with `.docs/compare-colours.py` on the 75 wallpapers under `~/Pictures` (9 variants x 2
+flavours x 2 modes each):
+
+- Same thumbnail and best colour as Python: every colour the templates or shell use matches, except
+  expressive dark's primary family. The crate uses `t_min_c` for its `primaryContainer` tone where
+  Python uses `t_max_c`, so that scheme gets a dark container instead of a light one. The four Dim
+  colours also differ on 2021-spec variants (the crate uses the newer `Darker` pair rule); nothing
+  uses them.
+- From an empty cache: the quantizer differs from Python's C++ one, so the best colour moves (median
+  3.8 degrees of hue; 8 of 75 pick a different dominant colour). Python moves by up to 121 degrees
+  itself when the thumbnail is decoded by Pillow instead of stb, so the pick was already fragile.
+  Smart options differ for 3 of 75.
+- Speed: a new still wallpaper takes 0.03-0.04 s (Python: 0.08-0.15 s plus interpreter startup).
 
 ## Skill stages
 
