@@ -3,15 +3,12 @@
 //! Commands first run as a plan whose only side effect is filling caches. Writes, symlinks,
 //! notifications and prints are recorded as [`Effect`]s and run once the plan finished.
 
-use crate::util::{
-    Colours, Paths, char_slice, dumps, file_name, hash_file, py_int16, py_repr_list, python, rand_below, read_text,
-};
+use crate::colours;
+use crate::util::{Colours, Paths, char_slice, dumps, file_name, py_int16, py_repr_list, rand_below, read_text};
 use serde_json::{Map, Value};
-use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const VARIANTS: [&str; 9] =
     ["tonalspot", "vibrant", "expressive", "fidelity", "fruitsalad", "monochrome", "neutral", "rainbow", "content"];
@@ -34,16 +31,6 @@ pub enum Stop {
 
 pub fn fail(msg: impl Into<String>) -> Stop {
     Stop::Fail(msg.into())
-}
-
-/// Have the Python CLI fill a colour cache (`caelestia-py _gen ...`). It writes nothing else.
-pub fn generate(args: &[&OsStr]) -> Result<(), Stop> {
-    let py = python();
-    match Command::new(&py).arg("_gen").args(args).status() {
-        Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(fail(format!("colour generation failed ({s})"))),
-        Err(e) => Err(fail(format!("cannot run {}: {e}", py.display()))),
-    }
 }
 
 pub enum Effect {
@@ -245,20 +232,12 @@ impl Ctx {
         self.schemes_dir().join(name).join(flavour).join(mode).with_extension("txt")
     }
 
-    /// `material.get_colours_for_image`: the cached dynamic scheme for a thumbnail. Python generates misses.
+    /// `material.get_colours_for_image`: the dynamic scheme for a thumbnail, cached.
     pub fn image_colours(&self, image: &Path, variant: &str, flavour: &str, mode: &str) -> Result<Colours, Stop> {
-        let hash = hash_file(image).map_err(|e| match e.kind() {
+        colours::for_image(&self.p.c_cache, image, variant, flavour, mode).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => Stop::Missing,
-            _ => fail(format!("cannot read {}: {e}", image.display())),
-        })?;
-        let cache =
-            self.p.c_cache.join("schemes").join(hash).join(variant).join(flavour).join(mode).with_extension("json");
-        let read = || fs::read_to_string(&cache).ok().and_then(|t| serde_json::from_str(&t).ok()).and_then(as_colours);
-        if let Some(c) = read() {
-            return Ok(c);
-        }
-        generate(&["colours".as_ref(), image.as_os_str(), variant.as_ref(), flavour.as_ref(), mode.as_ref()])?;
-        read().ok_or_else(|| fail(format!("no colours were generated for {}", image.display())))
+            _ => fail(format!("cannot generate colours for {}: {e}", image.display())),
+        })
     }
 
     fn notify(&mut self, title: &str, body: String) {

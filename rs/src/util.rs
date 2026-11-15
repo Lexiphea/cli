@@ -237,7 +237,7 @@ fn rand_name() -> String {
 }
 
 /// `paths.atomic_write`: a 0600 `tmpXXXXXXXX` file in the same dir, renamed over `path`.
-pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
+pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
@@ -251,7 +251,7 @@ pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     };
-    let r = f.write_all(content.as_bytes()).and_then(|_| fs::rename(&tmp, path));
+    let r = f.write_all(content.as_ref()).and_then(|_| fs::rename(&tmp, path));
     if r.is_err() {
         let _ = fs::remove_file(&tmp);
     }
@@ -329,11 +329,6 @@ pub fn new_session(cmd: &mut Command) -> &mut Command {
             Ok(())
         })
     }
-}
-
-/// The Python CLI: `$CAELESTIA_PY`, else `caelestia-py` from PATH. Never `caelestia`, which is this binary.
-pub fn python() -> std::ffi::OsString {
-    std::env::var_os("CAELESTIA_PY").unwrap_or_else(|| "caelestia-py".into())
 }
 
 /// `hypr.message(msg)` with `is_json=True`.

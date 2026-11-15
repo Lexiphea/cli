@@ -12,10 +12,8 @@ SB=$ROOT/sb # live sandbox; always the same path so symlink targets and file con
 TPL=$ROOT/tpl
 BIN=$ROOT/bin
 LOG=$ROOT/cmds.log
-FALLBACK_MARK=$ROOT/fallback.mark
 RS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RS_BIN=${RS_BIN:-$RS_DIR/target/release/caelestia}
-PY_BIN=${PY_BIN:-$HOME/.local/bin/caelestia-py}
 REAL_HOME=$HOME
 WALLS=$HOME/Pictures/Wallpapers
 
@@ -41,13 +39,6 @@ EOF
     for c in dconf killall sass notify-send sudo papirus-folders ffmpeg ffprobe chromium; do
         ln -s _shim "$BIN/$c"
     done
-    # Python CLI wrapper: records each call (fallbacks and `_gen` cache fills), then runs the real CLI
-    cat > "$BIN/caelestia-py" << EOF
-#!/bin/bash
-echo fallback >> "$FALLBACK_MARK"
-exec "$PY_BIN" "\$@"
-EOF
-    chmod +x "$BIN/caelestia-py"
 }
 
 # Run "$@" in the namespace with the sandbox environment. Extra env vars go in $RUN_ENV (array).
@@ -61,7 +52,7 @@ sandbox_run() {
         XDG_CONFIG_HOME="$SB/config" XDG_DATA_HOME="$SB/data" XDG_STATE_HOME="$SB/state" \
         XDG_CACHE_HOME="$SB/cache" XDG_PICTURES_DIR="$SB/pictures" XDG_VIDEOS_DIR="$SB/videos" \
         XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" HYPRLAND_INSTANCE_SIGNATURE="$HYPRLAND_INSTANCE_SIGNATURE" \
-        SHIM_LOG="$LOG" CAELESTIA_PY="$BIN/caelestia-py" \
+        SHIM_LOG="$LOG" \
         "${RUN_ENV[@]}" "$@"
 }
 
@@ -69,7 +60,6 @@ reset_sandbox() {
     rm -rf "$SB"
     cp -a "$TPL" "$SB"
     : > "$LOG"
-    rm -f "$FALLBACK_MARK"
 }
 
 # Point the current wallpaper at $1 (path.txt, current link, thumbnail link), the way set_wallpaper leaves them.
@@ -139,7 +129,7 @@ EOF
     ln -s "$WALLS/Live/singularity-cosmic-vortex-moewalls-com.mp4" "$SB/walls/video/vortex.mp4"
     cp "$w/current.jpg" "$SB/walls/only/current.jpg"
 
-    # Warm the caches (Rust has Python fill them), so the warm cases don't need Python.
+    # Warm the caches, so the warm cases skip colour generation.
     # Only cache/ is kept; state and generated theme files are rebuilt below.
     local keep_cfg=$SB/config/caelestia/cli.json
     echo '{"theme": {"enableTerm": false, "enableHypr": false, "enableDiscord": false, "enableGtk": false, "enableQt": false, "enableChromium": false}}' > "$keep_cfg.warm"
@@ -178,5 +168,5 @@ EOF
 
 ensure_template() {
     [[ -d $TPL && -z ${REBUILD:-} ]] || build_template
-    write_shims # every run, so a changed $PY_BIN takes effect without a rebuild
+    write_shims # every run, so shim changes take effect without a rebuild
 }

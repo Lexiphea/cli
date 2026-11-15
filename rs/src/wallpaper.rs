@@ -1,11 +1,14 @@
 //! Wallpapers, ported from the Python CLI's `utils/wallpaper.py` and `subcommands/wallpaper.py`.
-//! Thumbnails, first frames and smart options need Pillow, so Python generates them on a cache miss.
 
-use crate::scheme::{Ctx, Effect, Stop, fail, generate};
-use crate::util::{dumps, hash_file, hypr_json, rand_below};
+use crate::scheme::{Ctx, Effect, Stop, fail};
+use crate::util::{atomic_write, dumps, hash_file, hypr_json, rand_below};
+use image::codecs::jpeg::JpegEncoder;
+use image::{ImageFormat, ImageReader, RgbImage};
+use material_colors::color::Rgb;
+use material_colors::hct::Hct;
 use serde_json::{Map, Value};
 use std::fs;
-use std::io;
+use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -34,23 +37,126 @@ fn not_valid(wall: &Path) -> Stop {
     fail(format!("\"{}\" is not a valid image or video", wall.display()))
 }
 
-/// The wallpaper's cache dir, holding its thumbnail and smart.json; under the first frame's hash
-/// for animated ones. Python fills in whatever is missing.
+/// The wallpaper's cache dir, holding its thumbnail and smart.json, filling in whatever is missing.
+/// Animated wallpapers go by their first frame, under the first frame's hash.
 fn cache_dir(ctx: &Ctx, wall: &Path) -> Result<PathBuf, Stop> {
-    let dir = |hash: String| ctx.p.c_cache.join("wallpapers").join(hash);
-    let find = || -> Option<PathBuf> {
-        let mut hash = hash_file(wall).ok()?;
-        if is_animated(wall) {
-            hash = hash_file(&dir(hash).join("first_frame.png")).ok()?;
+    fill_cache(&ctx.p.c_cache.join("wallpapers"), wall)
+        .map_err(|e| fail(format!("cannot cache {}: {e}", wall.display())))
+}
+
+fn fill_cache(walls: &Path, wall: &Path) -> io::Result<PathBuf> {
+    let mut image = wall.to_path_buf();
+    let mut cache = walls.join(hash_file(wall)?);
+    if is_animated(wall) {
+        image = cache.join("first_frame.png");
+        if !image.exists() {
+            first_frame(wall, &image)?;
         }
-        let d = dir(hash);
-        (d.join("thumbnail.jpg").exists() && d.join("smart.json").exists()).then_some(d)
-    };
-    if let Some(d) = find() {
-        return Ok(d);
+        cache = walls.join(hash_file(&image)?);
     }
-    generate(&["wallpaper".as_ref(), wall.as_os_str()])?;
-    find().ok_or_else(|| fail(format!("no thumbnail was generated for {}", wall.display())))
+    let thumb = cache.join("thumbnail.jpg");
+    if !thumb.exists() {
+        let mut jpg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpg, 75)
+            .encode_image(&thumbnail(decode(&image)?))
+            .map_err(io::Error::other)?;
+        atomic_write(&thumb, jpg)?;
+    }
+    if smart_opts(&cache).is_err() {
+        let (variant, mode) = smart(&decode(&thumb)?);
+        let mut m = Map::new();
+        m.insert("variant".into(), variant.into());
+        m.insert("mode".into(), mode.into());
+        atomic_write(&cache.join("smart.json"), dumps(&Value::Object(m)))?;
+    }
+    Ok(cache)
+}
+
+fn decode(p: &Path) -> io::Result<RgbImage> {
+    Ok(ImageReader::open(p)?.with_guessed_format()?.decode().map_err(io::Error::other)?.into_rgb8())
+}
+
+/// A video's first frame through ffmpeg, or a GIF's from its own decoder, as PNG.
+fn first_frame(wall: &Path, out: &Path) -> io::Result<()> {
+    fs::create_dir_all(out.parent().expect("in the cache dir"))?;
+    if is_video(wall) {
+        let ok = Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-i"])
+            .arg(wall)
+            .args(["-frames:v", "1"])
+            .arg(out)
+            .stdin(Stdio::null())
+            .status()?
+            .success();
+        return if ok { Ok(()) } else { Err(io::Error::other("ffmpeg failed")) };
+    }
+    let mut png = Vec::new();
+    decode(wall)?.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).map_err(io::Error::other)?;
+    atomic_write(out, png)
+}
+
+/// Pillow's `thumbnail((128, 128), NEAREST)`: fit in 128x128 keeping the aspect ratio, taking the
+/// nearest source pixel with Pillow's exact sampling positions.
+fn thumbnail(img: RgbImage) -> RgbImage {
+    const MAX: f64 = 128.0;
+    let (w, h) = img.dimensions();
+    if f64::from(w) <= MAX && f64::from(h) <= MAX {
+        return img;
+    }
+    let aspect = f64::from(w) / f64::from(h);
+    // The floor or ceiling of `n` whose ratio is closer to the aspect (the floor on a tie), at least 1
+    let round = |n: f64, off: &dyn Fn(f64) -> f64| {
+        (if off(n.ceil()) < off(n.floor()) { n.ceil() } else { n.floor() }).max(1.0) as u32
+    };
+    let (tw, th) = if aspect <= 1.0 {
+        (round(MAX * aspect, &|n| (aspect - n / MAX).abs()), MAX as u32)
+    } else {
+        (MAX as u32, round(MAX / aspect, &|n| if n == 0.0 { 0.0 } else { (aspect - MAX / n).abs() }))
+    };
+    if (tw, th) == (w, h) {
+        return img;
+    }
+    // ImagingScaleAffine: positions start half a step in and accumulate step by step
+    let positions = |from: u32, to: u32| -> Vec<u32> {
+        let step = f64::from(from) / f64::from(to);
+        let mut pos = step * 0.5;
+        (0..to)
+            .map(|_| {
+                let p = pos as u32;
+                pos += step;
+                p
+            })
+            .collect()
+    };
+    let (xs, ys) = (positions(w, tw), positions(h, th));
+    RgbImage::from_fn(tw, th, |x, y| *img.get_pixel(xs[x as usize], ys[y as usize]))
+}
+
+/// `get_smart_opts`: (variant, mode). The variant follows how colourful the thumbnail is; the mode
+/// whether its average colour is light.
+fn smart(img: &RgbImage) -> (&'static str, &'static str) {
+    let n = f64::from(img.width() * img.height());
+    let (mut rg, mut yb, mut sum) = (Vec::new(), Vec::new(), [0f64; 3]);
+    for p in img.pixels() {
+        let [r, g, b] = p.0.map(f64::from);
+        rg.push((r - g).abs());
+        yb.push((0.5 * (r + g) - b).abs());
+        for (s, v) in sum.iter_mut().zip([r, g, b]) {
+            *s += v;
+        }
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / n;
+    let std = |v: &[f64], m: f64| (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / n).sqrt();
+    let (mean_rg, mean_yb) = (mean(&rg), mean(&yb));
+    let colourfulness = std(&rg, mean_rg).hypot(std(&yb, mean_yb)) + 0.3 * mean_rg.hypot(mean_yb);
+    let variant = match colourfulness {
+        c if c < 10.0 => "neutral",
+        c if c < 20.0 => "content",
+        _ => "tonalspot",
+    };
+    let [r, g, b] = sum.map(|s| (s / n).round() as u8);
+    let mode = if Hct::new(Rgb::new(r, g, b)).get_tone() > 60.0 { "light" } else { "dark" };
+    (variant, mode)
 }
 
 /// `get_smart_opts` from smart.json: (mode, variant).

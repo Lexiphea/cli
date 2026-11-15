@@ -1,6 +1,6 @@
 #!/bin/bash
 # End-to-end checks of the caelestia binary in the sandbox (see sandbox.sh): cold and warm caches,
-# concurrent changes, command-line errors and the hand-off to the Python CLI.
+# concurrent changes and command-line errors.
 #
 # Usage: rs/test.sh     REBUILD=1 rebuilds the sandbox template.
 set -uo pipefail
@@ -26,7 +26,8 @@ check() { # name, then a command that must succeed
 run() { sandbox_run "$RS_BIN" "$@" > "$ROOT/stdout" 2> "$ROOT/stderr"; echo $? > "$ROOT/exit"; }
 exit_is() { [[ $(cat "$ROOT/exit") == "$1" ]]; }
 stdout_has() { grep -q -- "$1" "$ROOT/stdout"; }
-python_calls() { [[ $(wc -l 2> /dev/null < "$FALLBACK_MARK" || echo 0) == "$1" ]]; }
+# Cache dir of a still image
+wall_cache() { echo "$SB/cache/caelestia/wallpapers/$(sha256sum < "$1" | cut -d' ' -f1)"; }
 # scheme.json and the Hyprland theme carry the same colours
 consistent() {
     python3 -I - "$state/scheme.json" "$SB/config/hypr/scheme/current.lua" << 'PY'
@@ -39,15 +40,15 @@ scheme_is() { [[ $(python3 -I -c 'import json, sys; s = json.load(open(sys.argv[
 
 reset_sandbox
 run wallpaper -f "$SB/media/fresh.png"
-check "cold wallpaper -f: Python fills the caches (thumbnail, colours), Rust applies" \
-    eval 'exit_is 0 && python_calls 2 && [[ $(cat "$state/wallpaper/path.txt") == "$SB/media/fresh.png" ]] && consistent'
-rm -f "$FALLBACK_MARK"
+c=$(wall_cache "$SB/media/fresh.png")
+check "cold wallpaper -f: caches filled (thumbnail, smart options, colours), then applied" \
+    eval 'exit_is 0 && [[ -s $c/thumbnail.jpg && -s $c/smart.json ]] && [[ $(cat "$state/wallpaper/path.txt") == "$SB/media/fresh.png" ]] && consistent'
 run wallpaper -f "$SB/media/fresh.png"
-check "warm wallpaper -f: no Python" eval 'exit_is 0 && python_calls 0 && consistent'
+check "warm wallpaper -f" eval 'exit_is 0 && consistent'
 
 reset_sandbox
 run scheme set -v expressive
-check "uncached variant: colours generated, then applied" eval 'exit_is 0 && python_calls 1 && scheme_is "dynamic expressive" && consistent'
+check "uncached variant: colours generated, then applied" eval 'exit_is 0 && scheme_is "dynamic expressive" && consistent'
 
 reset_sandbox
 run wallpaper -p "$SB/media/anim.gif"
@@ -78,7 +79,7 @@ check "missing value: usage error" eval 'exit_is 2 && grep -q "expected one argu
 run wallpaper -h
 check "wallpaper -h prints help" eval 'exit_is 0 && stdout_has "usage: caelestia wallpaper"'
 run --version
-check "--version: no Python" eval 'exit_is 0 && stdout_has "^caelestia-cli 1" && python_calls 0'
+check "--version" eval 'exit_is 0 && stdout_has "^caelestia-cli 1"'
 
 echo
 echo "passed: $pass  failed: $fail"

@@ -1,8 +1,6 @@
 //! caelestia: the caelestia CLI. `scheme`, `wallpaper` (with every app theme), `shell` and `record`.
-//!
-//! The Python CLI (`caelestia-py`) still generates colours, thumbnails and first frames on a cache
-//! miss (`_gen`).
 
+mod colours;
 mod record;
 mod scheme;
 mod shell;
