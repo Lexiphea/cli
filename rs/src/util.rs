@@ -295,8 +295,9 @@ pub fn which(cmd: &str) -> bool {
         .any(|d| fs::metadata(d.join(cmd)).is_ok_and(|m| !m.is_dir() && m.permissions().mode() & 0o111 != 0))
 }
 
-/// `notify.notify(*args)`: `notify-send -a caelestia-cli ...`, waiting for it and failing on error.
-pub fn notify(args: &[String]) -> io::Result<()> {
+/// `notify-send -a caelestia-cli ...`, waiting for it and failing on error. Returns its trimmed stdout
+/// (the notification id with `-p`, or the chosen action).
+pub fn notify(args: &[String]) -> io::Result<String> {
     let o = Command::new("notify-send")
         .arg("-a")
         .arg("caelestia-cli")
@@ -304,7 +305,30 @@ pub fn notify(args: &[String]) -> io::Result<()> {
         .stdout(Stdio::piped())
         .spawn()?
         .wait_with_output()?;
-    if o.status.success() { Ok(()) } else { Err(io::Error::other(format!("notify-send failed: {}", o.status))) }
+    if !o.status.success() {
+        return Err(io::Error::other(format!("notify-send failed: {}", o.status)));
+    }
+    Ok(String::from_utf8_lossy(&o.stdout).trim().to_owned())
+}
+
+/// A yellow `:: Warning: msg` on stdout.
+pub fn warn(msg: &str) {
+    out(&format!("\x1b[33m:: Warning: {msg}\x1b[0m"));
+}
+
+/// Python's `start_new_session=True`: the child calls `setsid()` before exec.
+pub fn new_session(cmd: &mut Command) -> &mut Command {
+    use std::os::unix::process::CommandExt;
+    unsafe extern "C" {
+        fn setsid() -> i32;
+    }
+    // SAFETY: setsid() is async-signal-safe and touches no Rust state between fork and exec
+    unsafe {
+        cmd.pre_exec(|| {
+            setsid();
+            Ok(())
+        })
+    }
 }
 
 /// The Python CLI: `$CAELESTIA_PY`, else `caelestia-py` from PATH. Never `caelestia`, which is this binary.

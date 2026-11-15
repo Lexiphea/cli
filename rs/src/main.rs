@@ -1,9 +1,11 @@
-//! caelestia: the caelestia CLI. `scheme` and `wallpaper`, including every app theme, live here.
+//! caelestia: the caelestia CLI. `scheme`, `wallpaper` (with every app theme), `shell` and `record`.
 //!
-//! The Python CLI (`caelestia-py`) still runs every other command, which this binary `exec`s with
-//! the same argv, and generates colours, thumbnails and first frames on a cache miss (`_gen`).
+//! The Python CLI (`caelestia-py`) still generates colours, thumbnails and first frames on a cache
+//! miss (`_gen`).
 
+mod record;
 mod scheme;
+mod shell;
 mod theme;
 mod util;
 mod wallpaper;
@@ -11,15 +13,13 @@ mod wallpaper;
 use scheme::{Ctx, Effect, SetArgs, Stop, VARIANTS};
 use std::collections::HashMap;
 use std::env;
-use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::os::unix::fs::symlink;
-use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
 use theme::Config;
-use util::{Paths, flush_out, out, python};
+use util::{Paths, flush_out, out};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -50,11 +50,21 @@ fn label(spec: &Spec) -> String {
 
 /// The subset of argparse these commands use. No abbreviations, `--` or positionals.
 fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
+    let (opts, rest) = parse_rest(toks, specs)?;
+    match rest.first() {
+        Some(t) => Err(Stop::Usage(format!("unrecognized arguments: {t}"))),
+        None => Ok(opts),
+    }
+}
+
+/// `parse`, plus the tokens that aren't options (one `nargs="*"` positional).
+fn parse_rest(toks: &[String], specs: &[Spec]) -> Result<(Opts, Vec<String>), Stop> {
     if toks.iter().any(|t| t == "-h" || t == "--help") {
         return Err(Stop::Help);
     }
     let unknown = |t: &str| Stop::Usage(format!("unrecognized arguments: {t}"));
     let mut opts = Opts::new();
+    let mut rest = Vec::new();
     let mut i = 0;
     while i < toks.len() {
         let t = &toks[i];
@@ -83,7 +93,8 @@ fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
                 explicit = Some(chars.as_str()).filter(|s| !s.is_empty());
             }
         } else {
-            return Err(unknown(t));
+            rest.push(t.clone());
+            continue;
         }
         let next_is_value = toks.get(i).is_some_and(|n| is_value(n));
         let value = match (spec.2, explicit) {
@@ -103,15 +114,7 @@ fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
         };
         opts.insert(spec.1, value);
     }
-    Ok(opts)
-}
-
-/// Replace this process with the Python CLI, same argv.
-fn fallback(argv: &[OsString]) -> ! {
-    let py = python();
-    let err = Command::new(&py).args(argv).exec();
-    eprintln!("caelestia: cannot run {}: {err}", py.display());
-    process::exit(127);
+    Ok((opts, rest))
 }
 
 fn usage_error(msg: String) -> ! {
@@ -136,7 +139,7 @@ fn run_effects(effects: Vec<Effect>) -> io::Result<()> {
                 }
                 symlink(target, link)?;
             }
-            Effect::Notify(args) => util::notify(&args)?,
+            Effect::Notify(args) => drop(util::notify(&args)?),
             Effect::Print(s) => out(&s),
         }
     }
@@ -145,8 +148,6 @@ fn run_effects(effects: Vec<Effect>) -> io::Result<()> {
 
 /// What a plan leaves to do after its effects.
 enum Next {
-    /// Not ours: run the Python CLI
-    Python,
     Done,
     Apply(Config),
     ApplyWall(Config, wallpaper::WallSet),
@@ -272,7 +273,55 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
         (Some("scheme"), Some(c)) => {
             Err(Stop::Usage(format!("argument: invalid choice: '{c}' (choose from list, get, set)")))
         }
-        _ => Ok(Next::Python),
+        (Some("shell"), _) => {
+            let (mut o, message) = parse_rest(
+                &args[1..],
+                &[
+                    ('d', "daemon", Flag),
+                    ('r', "restart", Flag),
+                    ('s', "show", Flag),
+                    ('l', "log", Flag),
+                    ('k', "kill", Flag),
+                    ('\0', "log-rules", Value),
+                ],
+            )?;
+            let [daemon, restart, show, log] = flags(&o, ["daemon", "restart", "show", "log"]);
+            let a = shell::Args {
+                message,
+                daemon,
+                restart,
+                show,
+                log,
+                kill: o.contains_key("kill"),
+                log_rules: o.remove("log-rules").flatten(),
+            };
+            shell::run(&ctx.p, &a)?;
+            Ok(Next::Done)
+        }
+        (Some("record"), _) => {
+            let mut o = parse(
+                &args[1..],
+                &[('r', "region", Opt), ('s', "sound", Flag), ('p', "pause", Flag), ('c', "clipboard", Flag)],
+            )?;
+            let a = record::Args {
+                region: o.remove("region"),
+                sound: o.contains_key("sound"),
+                pause: o.contains_key("pause"),
+                clipboard: o.contains_key("clipboard"),
+            };
+            record::run(&ctx.p, &a)?;
+            Ok(Next::Done)
+        }
+        (None, _) => Err(Stop::Help),
+        (Some(c), _) if c.starts_with('-') => {
+            // `-v` wins over anything after it, as argparse runs no command then
+            parse_rest(&args[..1], &[('v', "version", Flag)])?;
+            ctx.effects.push(Effect::Print(concat!("caelestia-cli ", env!("CARGO_PKG_VERSION")).into()));
+            Ok(Next::Done)
+        }
+        (Some(c), _) => Err(Stop::Usage(format!(
+            "argument COMMAND: invalid choice: '{c}' (choose from 'shell', 'scheme', 'wallpaper', 'record')"
+        ))),
     }
 }
 
@@ -283,7 +332,10 @@ fn help(args: &[String]) -> &'static str {
         (Some("scheme"), Some("get")) => include_str!("help/scheme-get.txt"),
         (Some("scheme"), Some("set")) => include_str!("help/scheme-set.txt"),
         (Some("wallpaper"), _) => include_str!("help/wallpaper.txt"),
-        _ => include_str!("help/scheme.txt"),
+        (Some("scheme"), _) => include_str!("help/scheme.txt"),
+        (Some("shell"), _) => include_str!("help/shell.txt"),
+        (Some("record"), _) => include_str!("help/record.txt"),
+        _ => include_str!("help/caelestia.txt"),
     }
 }
 
@@ -305,17 +357,11 @@ fn wall_hook(ctx: &Ctx, cfg: &Config, set: &wallpaper::WallSet) -> io::Result<()
 }
 
 fn main() {
-    let argv: Vec<OsString> = env::args_os().skip(1).collect();
-    let ours = argv.first().is_some_and(|a| a == "scheme" || a == "wallpaper");
-    let Some(args) = argv.iter().map(|a| a.to_str().map(str::to_owned)).collect::<Option<Vec<_>>>() else {
-        if ours {
-            usage_error("arguments must be UTF-8".into())
-        }
-        fallback(&argv)
+    let Some(args) = env::args_os().skip(1).map(|a| a.into_string().ok()).collect::<Option<Vec<_>>>() else {
+        usage_error("arguments must be UTF-8".into())
     };
     let mut ctx = Ctx::new(Paths::from_env());
     let next = match plan(&mut ctx, &args) {
-        Ok(Next::Python) => fallback(&argv),
         Ok(n) => n,
         Err(Stop::Help) => {
             out(help(&args).trim_end());
@@ -335,7 +381,7 @@ fn main() {
         }
     };
     let r = run_effects(std::mem::take(&mut ctx.effects)).and_then(|()| match &next {
-        Next::Python | Next::Done => Ok(()),
+        Next::Done => Ok(()),
         Next::Apply(cfg) => theme::apply_colours(&ctx.p, cfg, ctx.cur()),
         Next::ApplyWall(cfg, set) => {
             theme::apply_colours(&ctx.p, cfg, ctx.cur())?;

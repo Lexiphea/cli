@@ -78,7 +78,7 @@ check "missing value: usage error" eval 'exit_is 2 && grep -q "expected one argu
 run wallpaper -h
 check "wallpaper -h prints help" eval 'exit_is 0 && stdout_has "usage: caelestia wallpaper"'
 run --version
-check "other commands go to Python" eval 'exit_is 0 && stdout_has "^caelestia-cli " && python_calls 1'
+check "--version: no Python" eval 'exit_is 0 && stdout_has "^caelestia-cli 1" && python_calls 0'
 
 echo
 echo "passed: $pass  failed: $fail"

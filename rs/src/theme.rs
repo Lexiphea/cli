@@ -2,15 +2,14 @@
 
 use crate::scheme::{Scheme, Stop, fail};
 use crate::util::{
-    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, out, py_int16, read_text,
-    truthy, which,
+    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, new_session, out,
+    py_int16, read_text, truthy, which,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -438,17 +437,7 @@ fn sync_papirus(p: &Paths, hex: &str) -> Res {
     let mut cmd = Command::new("sudo");
     cmd.args(["-n", "papirus-folders", "-C", color, "-u"]).stdout(Stdio::null()).stderr(Stdio::null());
     // start_new_session=True, and not waited on
-    unsafe extern "C" {
-        fn setsid() -> i32;
-    }
-    // SAFETY: setsid() is async-signal-safe and touches no Rust state between fork and exec
-    unsafe {
-        cmd.pre_exec(|| {
-            setsid();
-            Ok(())
-        });
-    }
-    let _ = cmd.spawn();
+    let _ = new_session(&mut cmd).spawn();
     Ok(())
 }
 

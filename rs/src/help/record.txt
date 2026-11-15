@@ -1,0 +1,9 @@
+usage: caelestia record [-h] [-r [REGION]] [-s] [-p] [-c]
+
+options:
+  -h, --help            show this help message and exit
+  -r, --region [REGION]
+                        record a region
+  -s, --sound           record audio
+  -p, --pause           pause/resume the recording
+  -c, --clipboard       copy recording path to clipboard
