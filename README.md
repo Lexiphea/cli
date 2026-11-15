@@ -22,7 +22,7 @@ binary onto your `PATH`:
 
 ```sh
 git clone https://github.com/Lexiphea/cli.git caelestia-cli && cd caelestia-cli
-cargo build --release --manifest-path rs/Cargo.toml
+(cd rs && cargo build --release) # from rs/, so the CPU tuning in rs/.cargo/config.toml applies
 ln -s "$PWD/rs/target/release/caelestia" ~/.local/bin/caelestia
 sudo cp completions/caelestia.fish /usr/share/fish/vendor_completions.d/caelestia.fish
 ```
