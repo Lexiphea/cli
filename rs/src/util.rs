@@ -291,9 +291,8 @@ pub fn hash_file(p: &Path) -> io::Result<String> {
 /// `shutil.which(cmd) is not None`.
 pub fn which(cmd: &str) -> bool {
     let path = env::var_os("PATH").unwrap_or_else(|| "/bin:/usr/bin".into());
-    env::split_paths(&path).any(|d| {
-        fs::metadata(d.join(cmd)).is_ok_and(|m| !m.is_dir() && m.permissions().mode() & 0o111 != 0)
-    })
+    env::split_paths(&path)
+        .any(|d| fs::metadata(d.join(cmd)).is_ok_and(|m| !m.is_dir() && m.permissions().mode() & 0o111 != 0))
 }
 
 /// `notify.notify(*args)`: `notify-send -a caelestia-cli ...`, waiting for it and failing on error.
@@ -322,7 +321,9 @@ pub fn hypr_json(msg: &str) -> io::Result<Value> {
 /// `hypr.is_lua_config()`, cached; any failure means "not Lua".
 pub fn is_lua_config() -> bool {
     static LUA: OnceLock<bool> = OnceLock::new();
-    *LUA.get_or_init(|| hypr_json("status").is_ok_and(|v| v.get("configProvider").and_then(Value::as_str) == Some("lua")))
+    *LUA.get_or_init(|| {
+        hypr_json("status").is_ok_and(|v| v.get("configProvider").and_then(Value::as_str) == Some("lua"))
+    })
 }
 
 /// Python truthiness of a JSON value.

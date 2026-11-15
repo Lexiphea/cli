@@ -4,7 +4,9 @@
 //! Commands first run as a side-effect-free plan. Writes, symlinks, notifications and prints are
 //! recorded as [`Effect`]s and only run once the plan finished without needing Python.
 
-use crate::util::{Colours, Paths, char_slice, dumps, file_name, hash_file, py_int16, py_repr_list, rand_below, read_text};
+use crate::util::{
+    Colours, Paths, char_slice, dumps, file_name, hash_file, py_int16, py_repr_list, rand_below, read_text,
+};
 use serde_json::{Map, Value};
 use std::fs;
 use std::io;
@@ -216,8 +218,10 @@ impl Ctx {
 
     /// `material.get_colours_for_image`, cache hits only: a miss needs colour generation, so Python.
     pub fn image_colours(&self, image: &Path, variant: &str, flavour: &str, mode: &str) -> Result<Colours, Stop> {
-        let hash = hash_file(image).map_err(|e| if e.kind() == io::ErrorKind::NotFound { Stop::Missing } else { Stop::Fallback })?;
-        let cache = self.p.c_cache.join("schemes").join(hash).join(variant).join(flavour).join(mode).with_extension("json");
+        let hash = hash_file(image)
+            .map_err(|e| if e.kind() == io::ErrorKind::NotFound { Stop::Missing } else { Stop::Fallback })?;
+        let cache =
+            self.p.c_cache.join("schemes").join(hash).join(variant).join(flavour).join(mode).with_extension("json");
         let text = fs::read_to_string(cache).map_err(|_| Stop::Fallback)?;
         serde_json::from_str(&text).ok().and_then(as_colours).ok_or(Stop::Fallback)
     }
@@ -355,7 +359,8 @@ pub fn set(ctx: &mut Ctx, a: &SetArgs) -> Result<bool, Stop> {
     }
     // argparse values are only acted on when truthy, so empty strings count as absent
     let nonempty = |o: &Option<String>| o.clone().filter(|s| !s.is_empty());
-    let (name, flavour, mode, variant) = (nonempty(&a.name), nonempty(&a.flavour), nonempty(&a.mode), nonempty(&a.variant));
+    let (name, flavour, mode, variant) =
+        (nonempty(&a.name), nonempty(&a.flavour), nonempty(&a.mode), nonempty(&a.variant));
     if a.random {
         ctx.set_random()?;
     } else if name.is_some() || flavour.is_some() || mode.is_some() || variant.is_some() {

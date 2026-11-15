@@ -2,8 +2,8 @@
 
 use crate::scheme::{Scheme, Stop};
 use crate::util::{
-    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, out, py_int16,
-    read_text, truthy, which,
+    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, out, py_int16, read_text,
+    truthy, which,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -17,8 +17,27 @@ use std::thread;
 
 const DISCORD_CLIENTS: [&str; 6] = ["Equicord", "Vencord", "BetterDiscord", "equibop", "vesktop", "legcord"];
 const SEQUENCE_KEYS: [&str; 21] = [
-    "onSurface", "surface", "secondary", "term0", "term1", "term2", "term3", "term4", "term5", "term6", "term7",
-    "term8", "term9", "term10", "term11", "term12", "term13", "term14", "term15", "primary", "tertiary",
+    "onSurface",
+    "surface",
+    "secondary",
+    "term0",
+    "term1",
+    "term2",
+    "term3",
+    "term4",
+    "term5",
+    "term6",
+    "term7",
+    "term8",
+    "term9",
+    "term10",
+    "term11",
+    "term12",
+    "term13",
+    "term14",
+    "term15",
+    "primary",
+    "tertiary",
 ];
 
 /// `cli.json`, checked up front so the apply step can't hit a shape Python would crash on.
@@ -270,13 +289,7 @@ fn gen_replace_dynamic(c: &Colours, template: &Path, mode: &str) -> Result<Strin
 
 fn hex_to_ansi(c: &str, i: &[u8]) -> String {
     let i: Vec<String> = i.iter().map(u8::to_string).collect();
-    format!(
-        "\x1b]{};rgb:{}/{}/{}\x1b\\",
-        i.join(";"),
-        char_slice(c, 0, 2),
-        char_slice(c, 2, 4),
-        char_slice(c, 4, 6)
-    )
+    format!("\x1b]{};rgb:{}/{}/{}\x1b\\", i.join(";"), char_slice(c, 0, 2), char_slice(c, 2, 4), char_slice(c, 4, 6))
 }
 
 fn gen_sequences(c: &Colours) -> String {
@@ -378,7 +391,11 @@ fn apply_gtk(p: &Paths, c: &Colours, mode: &str, icon: Option<&str>) -> Res {
     }
     let icon = icon.map_or_else(|| format!("Papirus-{}", capitalize(mode)), str::to_owned);
     let input = format!("[/]\ngtk-theme='adw-gtk3-dark'\ncolor-scheme='prefer-{mode}'\nicon-theme='{icon}'\n");
-    let mut child = Command::new("dconf").args(["load", "/org/gnome/desktop/interface/"]).stdin(Stdio::piped()).spawn().map_err(e2s)?;
+    let mut child = Command::new("dconf")
+        .args(["load", "/org/gnome/desktop/interface/"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(e2s)?;
     let _ = child.stdin.take().expect("piped").write_all(input.as_bytes());
     child.wait().map_err(e2s)?;
     sync_papirus(p, col(c, "primary"))
@@ -590,18 +607,78 @@ pub fn apply_colours(p: &Paths, cfg: &Config, s: &Scheme) -> io::Result<()> {
             }
             // (config key, fn name, template, add '#', destination, extra replacements, app to signal)
             let simple = [
-                ("enableSpicetify", "apply_spicetify", format!("spicetify-{mode}.ini"), false,
-                    p.config.join("spicetify/Themes/caelestia/color.ini"), vec![], None),
-                ("enablePandora", "apply_pandora", "pandora.json".into(), true,
-                    p.data.join("PandoraLauncher/themes/caelestia.json"), vec![("{{ $mode }}", mode)], None),
-                ("enableFuzzel", "apply_fuzzel", "fuzzel.ini".into(), false, p.config.join("fuzzel/fuzzel.ini"), vec![], None),
-                ("enableBtop", "apply_btop", "btop.theme".into(), true,
-                    p.config.join("btop/themes/caelestia.theme"), vec![], Some("btop")),
-                ("enableNvtop", "apply_nvtop", "nvtop.colors".into(), true, p.config.join("nvtop/nvtop.colors"), vec![], None),
-                ("enableHtop", "apply_htop", "htop.theme".into(), true, p.config.join("htop/htoprc"), vec![], Some("htop")),
-                ("enableWarp", "apply_warp", "warp.yaml".into(), true,
-                    p.data.join("warp-terminal/themes/caelestia.yaml"), vec![("{{ $warp_mode }}", warp)], None),
-                ("enableCava", "apply_cava", "cava.conf".into(), true, p.config.join("cava/config"), vec![], Some("cava")),
+                (
+                    "enableSpicetify",
+                    "apply_spicetify",
+                    format!("spicetify-{mode}.ini"),
+                    false,
+                    p.config.join("spicetify/Themes/caelestia/color.ini"),
+                    vec![],
+                    None,
+                ),
+                (
+                    "enablePandora",
+                    "apply_pandora",
+                    "pandora.json".into(),
+                    true,
+                    p.data.join("PandoraLauncher/themes/caelestia.json"),
+                    vec![("{{ $mode }}", mode)],
+                    None,
+                ),
+                (
+                    "enableFuzzel",
+                    "apply_fuzzel",
+                    "fuzzel.ini".into(),
+                    false,
+                    p.config.join("fuzzel/fuzzel.ini"),
+                    vec![],
+                    None,
+                ),
+                (
+                    "enableBtop",
+                    "apply_btop",
+                    "btop.theme".into(),
+                    true,
+                    p.config.join("btop/themes/caelestia.theme"),
+                    vec![],
+                    Some("btop"),
+                ),
+                (
+                    "enableNvtop",
+                    "apply_nvtop",
+                    "nvtop.colors".into(),
+                    true,
+                    p.config.join("nvtop/nvtop.colors"),
+                    vec![],
+                    None,
+                ),
+                (
+                    "enableHtop",
+                    "apply_htop",
+                    "htop.theme".into(),
+                    true,
+                    p.config.join("htop/htoprc"),
+                    vec![],
+                    Some("htop"),
+                ),
+                (
+                    "enableWarp",
+                    "apply_warp",
+                    "warp.yaml".into(),
+                    true,
+                    p.data.join("warp-terminal/themes/caelestia.yaml"),
+                    vec![("{{ $warp_mode }}", warp)],
+                    None,
+                ),
+                (
+                    "enableCava",
+                    "apply_cava",
+                    "cava.conf".into(),
+                    true,
+                    p.config.join("cava/config"),
+                    vec![],
+                    Some("cava"),
+                ),
             ];
             for (key, name, template, hash, dest, extra, signal) in simple {
                 if on(key) {
@@ -632,12 +709,7 @@ pub fn apply_colours(p: &Paths, cfg: &Config, s: &Scheme) -> io::Result<()> {
         });
 
         if let Ok(Some(hook)) = post_hook(&theme) {
-            Command::new("/bin/sh")
-                .arg("-c")
-                .arg(hook)
-                .envs(scheme_env(s))
-                .stderr(Stdio::null())
-                .status()?;
+            Command::new("/bin/sh").arg("-c").arg(hook).envs(scheme_env(s)).stderr(Stdio::null()).status()?;
         }
         Ok(())
     })();

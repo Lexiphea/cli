@@ -86,7 +86,9 @@ pub fn set(ctx: &mut Ctx, wall: &Path, no_smart: bool) -> Result<WallSet, Stop> 
     // Path.resolve(): a path that doesn't resolve isn't a valid wallpaper either
     let wall = match fs::canonicalize(wall) {
         Ok(w) => w,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(Stop::Fail(format!("\"{}\" is not a valid image or video", wall.display()))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(Stop::Fail(format!("\"{}\" is not a valid image or video", wall.display())));
+        }
         Err(_) => return Err(Stop::Fallback),
     };
     if !is_valid(&wall) {
@@ -131,7 +133,8 @@ fn size(wall: &Path) -> Option<(i64, i64)> {
     if !o.status.success() {
         return None;
     }
-    let nums: Vec<i64> = String::from_utf8(o.stdout).ok()?.split_whitespace().map(|t| t.parse().ok()).collect::<Option<_>>()?;
+    let nums: Vec<i64> =
+        String::from_utf8(o.stdout).ok()?.split_whitespace().map(|t| t.parse().ok()).collect::<Option<_>>()?;
     match nums[..] {
         [w, h, r, ..] if r % 180 != 0 => Some((h, w)),
         [w, h, ..] => Some((w, h)),

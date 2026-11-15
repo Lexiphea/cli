@@ -156,12 +156,18 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
     };
     match (first, second) {
         (Some("scheme"), Some("list")) => {
-            let o = parse(&args[2..], &[('n', "names", Flag), ('f', "flavours", Flag), ('m', "modes", Flag), ('v', "variants", Flag)])?;
+            let o = parse(
+                &args[2..],
+                &[('n', "names", Flag), ('f', "flavours", Flag), ('m', "modes", Flag), ('v', "variants", Flag)],
+            )?;
             scheme::list(ctx, flags(&o, ["names", "flavours", "modes", "variants"]))?;
             Ok(Next::Done)
         }
         (Some("scheme"), Some("get")) => {
-            let o = parse(&args[2..], &[('n', "name", Flag), ('f', "flavour", Flag), ('m', "mode", Flag), ('v', "variant", Flag)])?;
+            let o = parse(
+                &args[2..],
+                &[('n', "name", Flag), ('f', "flavour", Flag), ('m', "mode", Flag), ('v', "variant", Flag)],
+            )?;
             scheme::get(ctx, flags(&o, ["name", "flavour", "mode", "variant"]))?;
             Ok(Next::Done)
         }
@@ -201,7 +207,14 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
         (Some("wallpaper"), _) => {
             let o = parse(
                 &args[1..],
-                &[('p', "print", Opt), ('r', "random", Opt), ('f', "file", Value), ('n', "no-filter", Flag), ('t', "threshold", Value), ('N', "no-smart", Flag)],
+                &[
+                    ('p', "print", Opt),
+                    ('r', "random", Opt),
+                    ('f', "file", Value),
+                    ('n', "no-filter", Flag),
+                    ('t', "threshold", Value),
+                    ('N', "no-smart", Flag),
+                ],
             )?;
             let no_smart = o.contains_key("no-smart");
             // nargs="?" consts: the current wallpaper (read at parse time) and the wallpapers dir
