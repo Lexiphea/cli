@@ -307,6 +307,11 @@ pub fn notify(args: &[String]) -> io::Result<()> {
     if o.status.success() { Ok(()) } else { Err(io::Error::other(format!("notify-send failed: {}", o.status))) }
 }
 
+/// The Python CLI: `$CAELESTIA_PY`, else `caelestia-py` from PATH. Never `caelestia`, which is this binary.
+pub fn python() -> std::ffi::OsString {
+    std::env::var_os("CAELESTIA_PY").unwrap_or_else(|| "caelestia-py".into())
+}
+
 /// `hypr.message(msg)` with `is_json=True`.
 pub fn hypr_json(msg: &str) -> io::Result<Value> {
     let var = |k: &str| env::var(k).unwrap_or_else(|_| "None".into());

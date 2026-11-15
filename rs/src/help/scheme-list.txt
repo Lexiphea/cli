@@ -1,0 +1,8 @@
+usage: caelestia scheme list [-h] [-n] [-f] [-m] [-v]
+
+options:
+  -h, --help      show this help message and exit
+  -n, --names     list scheme names
+  -f, --flavours  list scheme flavours
+  -m, --modes     list scheme modes
+  -v, --variants  list scheme variants

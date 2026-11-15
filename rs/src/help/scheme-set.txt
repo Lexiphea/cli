@@ -1,0 +1,14 @@
+usage: caelestia scheme set [-h] [--notify] [-r] [-n NAME] [-f FLAVOUR]
+                            [-m {dark,light}] [-v VARIANT]
+
+options:
+  -h, --help            show this help message and exit
+  --notify              send a notification on error
+  -r, --random          switch to a random scheme
+  -n, --name NAME       the name of the scheme to switch to (see `caelestia scheme list -n`)
+  -f, --flavour FLAVOUR
+                        the flavour to switch to
+  -m, --mode {dark,light}
+                        the mode to switch to
+  -v, --variant VARIANT
+                        the variant to switch to (see `caelestia scheme list -v`)

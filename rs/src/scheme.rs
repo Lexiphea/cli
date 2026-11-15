@@ -1,16 +1,17 @@
-//! Colour schemes: `utils/scheme.py`, the cache-reading half of `utils/material/__init__.py`,
-//! and `subcommands/scheme.py`.
+//! Colour schemes, ported from the Python CLI's `utils/scheme.py` and `subcommands/scheme.py`.
 //!
-//! Commands first run as a side-effect-free plan. Writes, symlinks, notifications and prints are
-//! recorded as [`Effect`]s and only run once the plan finished without needing Python.
+//! Commands first run as a plan whose only side effect is filling caches. Writes, symlinks,
+//! notifications and prints are recorded as [`Effect`]s and run once the plan finished.
 
 use crate::util::{
-    Colours, Paths, char_slice, dumps, file_name, hash_file, py_int16, py_repr_list, rand_below, read_text,
+    Colours, Paths, char_slice, dumps, file_name, hash_file, py_int16, py_repr_list, python, rand_below, read_text,
 };
 use serde_json::{Map, Value};
-use std::fs;
+use std::ffi::OsStr;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub const VARIANTS: [&str; 9] =
     ["tonalspot", "vibrant", "expressive", "fidelity", "fruitsalad", "monochrome", "neutral", "rainbow", "content"];
@@ -21,12 +22,28 @@ const NO_WALL: &str =
 /// Why a plan stopped early.
 #[derive(Debug)]
 pub enum Stop {
-    /// Needs work that isn't ported, or state the port doesn't model: exec the Python CLI.
-    Fallback,
-    /// Python raises here (exit 1). Effects recorded so far still run, as they would have in Python.
+    /// An error (exit 1). Effects recorded so far still run, as they did in the Python CLI.
     Fail(String),
     /// A FileNotFoundError that some callers turn into a ValueError.
     Missing,
+    /// A bad command line (exit 2).
+    Usage(String),
+    /// `-h`/`--help`
+    Help,
+}
+
+pub fn fail(msg: impl Into<String>) -> Stop {
+    Stop::Fail(msg.into())
+}
+
+/// Have the Python CLI fill a colour cache (`caelestia-py _gen ...`). It writes nothing else.
+pub fn generate(args: &[&OsStr]) -> Result<(), Stop> {
+    let py = python();
+    match Command::new(&py).arg("_gen").args(args).status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(fail(format!("colour generation failed ({s})"))),
+        Err(e) => Err(fail(format!("cannot run {}: {e}", py.display()))),
+    }
 }
 
 pub enum Effect {
@@ -69,6 +86,8 @@ pub struct Ctx {
     /// The thumbnail dynamic colours come from (`wallpaper/thumbnail.jpg`, or the one `wallpaper -f` is about to link)
     pub thumb: PathBuf,
     pub effects: Vec<Effect>,
+    /// `theme.lock`, held from [`Ctx::lock`] until the process exits
+    lock: Option<File>,
 }
 
 /// A JSON object whose values are all strings, as colours must be.
@@ -79,13 +98,23 @@ pub fn as_colours(v: Value) -> Option<Colours> {
     }
 }
 
-fn str_field(m: &Map<String, Value>, k: &str) -> Result<String, Stop> {
-    m.get(k).and_then(Value::as_str).map(str::to_owned).ok_or(Stop::Fallback)
+/// scheme.json's contents, if they have every field.
+fn scheme_from_json(v: Value) -> Option<Scheme> {
+    let Value::Object(m) = v else { return None };
+    let field = |k| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    Some(Scheme {
+        name: field("name")?,
+        flavour: field("flavour")?,
+        mode: field("mode")?,
+        variant: field("variant")?,
+        colours: m.get("colours").cloned().and_then(as_colours)?,
+        notify: false,
+    })
 }
 
 /// `read_colours_from_file`. Malformed lines are a ValueError in Python.
 fn read_colours(path: &Path) -> Result<Colours, Stop> {
-    let text = read_text(path).map_err(|_| Stop::Fallback)?;
+    let text = read_text(path).map_err(|e| fail(format!("cannot read {}: {e}", path.display())))?;
     let mut c = Colours::new();
     for line in splitlines(&text).into_iter().filter(|l| !l.is_empty()) {
         let parts: Vec<&str> = line.split(' ').collect();
@@ -121,24 +150,35 @@ fn splitlines(s: &str) -> Vec<&str> {
 
 fn list_dir(dir: &Path, want_dir: bool) -> Result<Vec<String>, Stop> {
     let mut v = Vec::new();
-    for e in fs::read_dir(dir).map_err(|_| Stop::Fallback)? {
-        let p = e.map_err(|_| Stop::Fallback)?.path();
+    let err = |e: io::Error| fail(format!("cannot list {}: {e}", dir.display()));
+    for e in fs::read_dir(dir).map_err(err)? {
+        let p = e.map_err(err)?.path();
         if if want_dir { p.is_dir() } else { p.is_file() } {
             let name = if want_dir { file_name(&p) } else { p.file_stem().and_then(|s| s.to_str()) };
-            v.push(name.ok_or(Stop::Fallback)?.to_owned());
+            v.push(name.ok_or_else(|| fail(format!("{} is not UTF-8", p.display())))?.to_owned());
         }
     }
     Ok(v)
 }
 
 fn pick(v: &[String]) -> Result<String, Stop> {
-    if v.is_empty() { Err(Stop::Fallback) } else { Ok(v[rand_below(v.len())].clone()) }
+    if v.is_empty() { Err(fail("Cannot choose from an empty sequence")) } else { Ok(v[rand_below(v.len())].clone()) }
 }
 
 impl Ctx {
     pub fn new(p: Paths) -> Self {
         let thumb = p.wall_dir().join("thumbnail.jpg");
-        Ctx { p, scheme: None, thumb, effects: Vec::new() }
+        Ctx { p, scheme: None, thumb, effects: Vec::new(), lock: None }
+    }
+
+    /// Wait for any other command changing the scheme or wallpaper to finish, so that the state
+    /// this one reads and the themes it writes always match. Call before reading any state.
+    pub fn lock(&mut self) -> Result<(), Stop> {
+        let path = self.p.c_state.join("theme.lock");
+        let f =
+            fs::create_dir_all(&self.p.c_state).and_then(|()| File::create(&path)).and_then(|f| f.lock().map(|()| f));
+        self.lock = Some(f.map_err(|e| fail(format!("cannot lock {}: {e}", path.display())))?);
+        Ok(())
     }
 
     pub fn cur(&self) -> &Scheme {
@@ -149,28 +189,17 @@ impl Ctx {
         self.scheme.as_mut().expect("scheme loaded")
     }
 
-    /// `get_scheme()`: scheme.json, or the default scheme (saved) if it's missing or invalid JSON.
+    /// `get_scheme()`: scheme.json, or the default scheme (saved) if it's missing or invalid.
     pub fn load_scheme(&mut self) -> Result<(), Stop> {
         if self.scheme.is_some() {
             return Ok(());
         }
-        let parsed = match fs::read(self.p.scheme_path()) {
-            Ok(b) => {
-                let s = String::from_utf8(b).map_err(|_| Stop::Fallback)?;
-                serde_json::from_str::<Value>(&s).ok()
-            }
-            Err(_) => None,
-        };
+        let parsed = fs::read_to_string(self.p.scheme_path())
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(scheme_from_json);
         let scheme = match parsed {
-            Some(Value::Object(m)) => Scheme {
-                name: str_field(&m, "name")?,
-                flavour: str_field(&m, "flavour")?,
-                mode: str_field(&m, "mode")?,
-                variant: str_field(&m, "variant")?,
-                colours: m.get("colours").cloned().and_then(as_colours).ok_or(Stop::Fallback)?,
-                notify: false,
-            },
-            Some(_) => return Err(Stop::Fallback),
+            Some(s) => s,
             None => {
                 let s = Scheme {
                     colours: read_colours(&self.colours_path("catppuccin", "mocha", "dark"))?,
@@ -216,14 +245,20 @@ impl Ctx {
         self.schemes_dir().join(name).join(flavour).join(mode).with_extension("txt")
     }
 
-    /// `material.get_colours_for_image`, cache hits only: a miss needs colour generation, so Python.
+    /// `material.get_colours_for_image`: the cached dynamic scheme for a thumbnail. Python generates misses.
     pub fn image_colours(&self, image: &Path, variant: &str, flavour: &str, mode: &str) -> Result<Colours, Stop> {
-        let hash = hash_file(image)
-            .map_err(|e| if e.kind() == io::ErrorKind::NotFound { Stop::Missing } else { Stop::Fallback })?;
+        let hash = hash_file(image).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => Stop::Missing,
+            _ => fail(format!("cannot read {}: {e}", image.display())),
+        })?;
         let cache =
             self.p.c_cache.join("schemes").join(hash).join(variant).join(flavour).join(mode).with_extension("json");
-        let text = fs::read_to_string(cache).map_err(|_| Stop::Fallback)?;
-        serde_json::from_str(&text).ok().and_then(as_colours).ok_or(Stop::Fallback)
+        let read = || fs::read_to_string(&cache).ok().and_then(|t| serde_json::from_str(&t).ok()).and_then(as_colours);
+        if let Some(c) = read() {
+            return Ok(c);
+        }
+        generate(&["colours".as_ref(), image.as_os_str(), variant.as_ref(), flavour.as_ref(), mode.as_ref()])?;
+        read().ok_or_else(|| fail(format!("no colours were generated for {}", image.display())))
     }
 
     fn notify(&mut self, title: &str, body: String) {
@@ -265,7 +300,7 @@ impl Ctx {
         let s = self.cur();
         let modes = self.modes(&s.name, &s.flavour)?;
         if !modes.contains(&s.mode) {
-            self.cur_mut().mode = modes.first().ok_or(Stop::Fallback)?.clone();
+            self.cur_mut().mode = modes.first().ok_or_else(|| fail(format!("scheme {} has no modes", s.name)))?.clone();
         }
         Ok(())
     }
@@ -278,7 +313,8 @@ impl Ctx {
         self.cur_mut().name = name.into();
         let flavours = self.flavours(name)?;
         if !flavours.contains(&self.cur().flavour) {
-            self.cur_mut().flavour = flavours.first().ok_or(Stop::Fallback)?.clone();
+            self.cur_mut().flavour =
+                flavours.first().ok_or_else(|| fail(format!("scheme {name} has no flavours")))?.clone();
         }
         self.check_mode()?;
         self.refresh()?;
@@ -399,7 +435,7 @@ pub fn get(ctx: &mut Ctx, flags: [bool; 4]) -> Result<(), Stop> {
     let mut lines = Vec::new();
     for (n, c) in &s.colours {
         let c = c.as_str().unwrap_or_default();
-        let ch = |a| py_int16(&char_slice(c, a, a + 2)).ok_or(Stop::Fallback);
+        let ch = |a| py_int16(&char_slice(c, a, a + 2)).ok_or_else(|| fail(format!("invalid colour {n}: {c:?}")));
         lines.push(format!("{n}: \x1b[38;2;{};{};{}m{c}\x1b[0m", ch(0)?, ch(2)?, ch(4)?));
     }
     ctx.print(format!(
@@ -454,15 +490,14 @@ pub fn list(ctx: &mut Ctx, flags: [bool; 4]) -> Result<(), Stop> {
                 ctx.image_colours(&ctx.thumb, &cur.variant, &cur.flavour, &cur.mode)
             } else {
                 let modes = ctx.modes(&name, &flavour)?;
-                let mode = if modes.contains(&cur.mode) { &cur.mode } else { modes.first().ok_or(Stop::Fallback)? };
-                read_colours(&ctx.colours_path(&name, &flavour, mode))
-            };
-            match colours {
-                Ok(c) => {
-                    flavours.insert(flavour, Value::Object(c));
+                match modes.iter().find(|&m| *m == cur.mode).or(modes.first()) {
+                    Some(mode) => read_colours(&ctx.colours_path(&name, &flavour, mode)),
+                    None => Err(Stop::Missing),
                 }
-                Err(Stop::Fallback) => return Err(Stop::Fallback),
-                Err(_) => {} // ValueError: skipped
+            };
+            // Missing wallpapers and bad colour files are skipped, as Python's ValueErrors were
+            if let Ok(c) = colours {
+                flavours.insert(flavour, Value::Object(c));
             }
         }
         schemes.insert(name, Value::Object(flavours));

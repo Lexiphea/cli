@@ -1,7 +1,7 @@
-//! Wallpapers: `utils/wallpaper.py` and `subcommands/wallpaper.py`, for cached wallpapers.
-//! Thumbnails, first frames and smart options that aren't cached yet need Pillow, so Python.
+//! Wallpapers, ported from the Python CLI's `utils/wallpaper.py` and `subcommands/wallpaper.py`.
+//! Thumbnails, first frames and smart options need Pillow, so Python generates them on a cache miss.
 
-use crate::scheme::{Ctx, Effect, Stop};
+use crate::scheme::{Ctx, Effect, Stop, fail, generate};
 use crate::util::{dumps, hash_file, hypr_json, rand_below};
 use serde_json::{Map, Value};
 use std::fs;
@@ -30,41 +30,50 @@ fn is_valid(p: &Path) -> bool {
     p.is_file() && (IMAGE_EXT.contains(&s.as_str()) || VIDEO_EXT.contains(&s.as_str()))
 }
 
-fn wall_cache(ctx: &Ctx, hash: &str) -> PathBuf {
-    ctx.p.c_cache.join("wallpapers").join(hash)
+fn not_valid(wall: &Path) -> Stop {
+    fail(format!("\"{}\" is not a valid image or video", wall.display()))
 }
 
-fn hash(p: &Path) -> Result<String, Stop> {
-    hash_file(p).map_err(|_| Stop::Fallback)
-}
-
-/// A cached file Python would otherwise generate.
-fn cached(p: PathBuf) -> Result<PathBuf, Stop> {
-    if p.exists() { Ok(p) } else { Err(Stop::Fallback) }
+/// The wallpaper's cache dir, holding its thumbnail and smart.json; under the first frame's hash
+/// for animated ones. Python fills in whatever is missing.
+fn cache_dir(ctx: &Ctx, wall: &Path) -> Result<PathBuf, Stop> {
+    let dir = |hash: String| ctx.p.c_cache.join("wallpapers").join(hash);
+    let find = || -> Option<PathBuf> {
+        let mut hash = hash_file(wall).ok()?;
+        if is_animated(wall) {
+            hash = hash_file(&dir(hash).join("first_frame.png")).ok()?;
+        }
+        let d = dir(hash);
+        (d.join("thumbnail.jpg").exists() && d.join("smart.json").exists()).then_some(d)
+    };
+    if let Some(d) = find() {
+        return Ok(d);
+    }
+    generate(&["wallpaper".as_ref(), wall.as_os_str()])?;
+    find().ok_or_else(|| fail(format!("no thumbnail was generated for {}", wall.display())))
 }
 
 /// `get_smart_opts` from smart.json: (mode, variant).
 fn smart_opts(cache: &Path) -> Result<(String, String), Stop> {
-    let text = fs::read_to_string(cache.join("smart.json")).map_err(|_| Stop::Fallback)?;
-    let v: Value = serde_json::from_str(&text).map_err(|_| Stop::Fallback)?;
-    let field = |k| v.get(k).and_then(Value::as_str).map(str::to_owned).ok_or(Stop::Fallback);
-    Ok((field("mode")?, field("variant")?))
+    let path = cache.join("smart.json");
+    let v: Option<Value> = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let field = |k| v.as_ref()?.get(k)?.as_str().map(str::to_owned);
+    field("mode").zip(field("variant")).ok_or_else(|| fail(format!("invalid {}", path.display())))
 }
 
 /// `wallpaper -p`: print the scheme a wallpaper would give.
 pub fn print_colours(ctx: &mut Ctx, wall: &str, no_smart: bool) -> Result<(), Stop> {
     ctx.load_scheme()?;
     let wall = Path::new(wall);
-    let cache = wall_cache(ctx, &hash(wall)?);
-    // The first frame only matters if smart.json or the thumbnail need generating, but Python makes it first
-    if is_animated(wall) {
-        cached(cache.join("first_frame.png"))?;
+    if !is_valid(wall) {
+        return Err(not_valid(wall));
     }
+    let cache = cache_dir(ctx, wall)?;
     let cur = ctx.cur();
     let (mode, variant) = if no_smart { (cur.mode.clone(), cur.variant.clone()) } else { smart_opts(&cache)? };
     let flavour = cur.flavour.clone();
-    let thumb = cached(cache.join("thumbnail.jpg"))?;
-    let colours = ctx.image_colours(&thumb, &variant, &flavour, &mode).map_err(|_| Stop::Fallback)?;
+    let thumb = cache.join("thumbnail.jpg");
+    let colours = ctx.image_colours(&thumb, &variant, &flavour, &mode)?;
     let mut m = Map::new();
     m.insert("name".into(), "dynamic".into());
     m.insert("flavour".into(), flavour.into());
@@ -84,27 +93,16 @@ pub struct WallSet {
 /// `set_wallpaper`, up to (not including) `apply_colours`.
 pub fn set(ctx: &mut Ctx, wall: &Path, no_smart: bool) -> Result<WallSet, Stop> {
     // Path.resolve(): a path that doesn't resolve isn't a valid wallpaper either
-    let wall = match fs::canonicalize(wall) {
-        Ok(w) => w,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(Stop::Fail(format!("\"{}\" is not a valid image or video", wall.display())));
-        }
-        Err(_) => return Err(Stop::Fallback),
-    };
+    let wall = fs::canonicalize(wall).map_err(|_| not_valid(wall))?;
     if !is_valid(&wall) {
-        return Err(Stop::Fail(format!("\"{}\" is not a valid image or video", wall.display())));
+        return Err(not_valid(&wall));
     }
-    let wall_str = wall.to_str().ok_or(Stop::Fallback)?.to_owned();
-    let mut src_hash = hash(&wall)?;
-    if is_animated(&wall) {
-        let frame = cached(wall_cache(ctx, &src_hash).join("first_frame.png"))?;
-        src_hash = hash(&frame)?;
-    }
+    let wall_str = wall.to_str().ok_or_else(|| fail(format!("{} is not UTF-8", wall.display())))?.to_owned();
+    let cache = cache_dir(ctx, &wall)?;
     let dir = ctx.p.wall_dir();
     ctx.effects.push(Effect::Text(dir.join("path.txt"), wall_str.clone()));
     ctx.effects.push(Effect::Link(dir.join("current"), wall.clone()));
-    let cache = wall_cache(ctx, &src_hash);
-    let thumb = cached(cache.join("thumbnail.jpg"))?;
+    let thumb = cache.join("thumbnail.jpg");
     ctx.effects.push(Effect::Link(dir.join("thumbnail.jpg"), thumb.clone()));
     ctx.thumb = thumb.clone();
 
@@ -115,7 +113,7 @@ pub fn set(ctx: &mut Ctx, wall: &Path, no_smart: bool) -> Result<WallSet, Stop> 
         ctx.set_variant(&variant)?;
     }
     ctx.update()?;
-    Ok(WallSet { wall: wall_str, thumb: thumb.to_str().ok_or(Stop::Fallback)?.to_owned() })
+    Ok(WallSet { wall: wall_str, thumb: thumb.to_string_lossy().into_owned() })
 }
 
 /// `get_size` for the size filter. None means Python's check_wall would return False.
@@ -144,7 +142,9 @@ fn size(wall: &Path) -> Option<(i64, i64)> {
 
 /// `directory.rglob("*")` filtered by `is_valid_wallpaper`: symlinked files count, symlinked dirs aren't entered.
 fn find_walls(dir: &Path, walls: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if e.file_type().is_ok_and(|t| t.is_dir()) {
@@ -158,8 +158,8 @@ fn find_walls(dir: &Path, walls: &mut Vec<PathBuf>) {
 pub struct RandomArgs<'a> {
     pub dir: &'a str,
     pub no_filter: bool,
-    /// `-t` was given: Python then compares an int with a str and crashes, so leave that to Python
-    pub threshold_given: bool,
+    /// Minimum share of the smallest monitor's size
+    pub threshold: f64,
     pub no_smart: bool,
 }
 
@@ -170,16 +170,16 @@ pub fn random(ctx: &mut Ctx, a: &RandomArgs) -> Result<WallSet, Stop> {
     if dir.is_dir() {
         find_walls(dir, &mut walls);
         if !a.no_filter {
-            if a.threshold_given {
-                return Err(Stop::Fallback);
-            }
-            let monitors = hypr_json("monitors").map_err(|_| Stop::Fallback)?;
-            let dim = |k: &str| -> Result<i64, Stop> {
-                let ms = monitors.as_array().ok_or(Stop::Fallback)?;
-                let vals: Option<Vec<i64>> = ms.iter().map(|m| m.get(k).and_then(Value::as_i64)).collect();
-                vals.and_then(|v| v.into_iter().min()).ok_or(Stop::Fallback)
+            let no_size = |e: String| {
+                fail(format!("cannot get the monitor size from Hyprland ({e}); use -n to skip the size filter"))
             };
-            let (min_w, min_h) = (dim("width")? as f64 * 0.8, dim("height")? as f64 * 0.8);
+            let monitors = hypr_json("monitors").map_err(|e| no_size(e.to_string()))?;
+            let dim = |k: &str| -> Result<i64, Stop> {
+                let ms = monitors.as_array().ok_or_else(|| no_size("not a list".into()))?;
+                let vals: Option<Vec<i64>> = ms.iter().map(|m| m.get(k).and_then(Value::as_i64)).collect();
+                vals.and_then(|v| v.into_iter().min()).ok_or_else(|| no_size(format!("no {k}")))
+            };
+            let (min_w, min_h) = (dim("width")? as f64 * a.threshold, dim("height")? as f64 * a.threshold);
             walls.retain(|w| size(w).is_some_and(|(width, height)| width as f64 >= min_w && height as f64 >= min_h));
         }
     }
@@ -198,7 +198,7 @@ pub fn random(ctx: &mut Ctx, a: &RandomArgs) -> Result<WallSet, Stop> {
             }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(_) => return Err(Stop::Fallback),
+        Err(e) => return Err(fail(format!("cannot read the current wallpaper: {e}"))),
     }
     let choice = walls.swap_remove(rand_below(walls.len()));
     set(ctx, &choice, a.no_smart)
@@ -207,7 +207,7 @@ pub fn random(ctx: &mut Ctx, a: &RandomArgs) -> Result<WallSet, Stop> {
 /// `get_wallpaper()`
 pub fn current(ctx: &Ctx) -> Result<Option<String>, Stop> {
     match fs::read(ctx.p.wall_dir().join("path.txt")) {
-        Ok(b) => String::from_utf8(b).map(Some).map_err(|_| Stop::Fallback),
+        Ok(b) => String::from_utf8(b).map(Some).map_err(|_| fail("the current wallpaper's path is not UTF-8")),
         Err(_) => Ok(None),
     }
 }

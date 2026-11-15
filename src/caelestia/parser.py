@@ -1,8 +1,5 @@
 import argparse
 
-from caelestia.utils.paths import wallpaper_path_path, wallpapers_dir
-from caelestia.utils.scheme import get_scheme_names, scheme_variants
-
 
 def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser = argparse.ArgumentParser(prog="caelestia", description="Main control script for the Caelestia dotfiles")
@@ -24,32 +21,9 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     shell_parser.add_argument("-k", "--kill", action="store_true", help="kill the shell")
     shell_parser.add_argument("--log-rules", metavar="RULES", help="log rules to apply")
 
-    # Create parser for scheme opts
-    scheme_parser = command_parser.add_parser("scheme", help="manage the colour scheme")
-    scheme_command_parser = scheme_parser.add_subparsers(title="subcommands")
-
-    list_parser = scheme_command_parser.add_parser("list", help="list available schemes")
-    list_parser.set_defaults(cmd="scheme.List")
-    list_parser.add_argument("-n", "--names", action="store_true", help="list scheme names")
-    list_parser.add_argument("-f", "--flavours", action="store_true", help="list scheme flavours")
-    list_parser.add_argument("-m", "--modes", action="store_true", help="list scheme modes")
-    list_parser.add_argument("-v", "--variants", action="store_true", help="list scheme variants")
-
-    get_parser = scheme_command_parser.add_parser("get", help="get scheme properties")
-    get_parser.set_defaults(cmd="scheme.Get")
-    get_parser.add_argument("-n", "--name", action="store_true", help="print the current scheme name")
-    get_parser.add_argument("-f", "--flavour", action="store_true", help="print the current scheme flavour")
-    get_parser.add_argument("-m", "--mode", action="store_true", help="print the current scheme mode")
-    get_parser.add_argument("-v", "--variant", action="store_true", help="print the current scheme variant")
-
-    set_parser = scheme_command_parser.add_parser("set", help="set the current scheme")
-    set_parser.set_defaults(cmd="scheme.Set")
-    set_parser.add_argument("--notify", action="store_true", help="send a notification on error")
-    set_parser.add_argument("-r", "--random", action="store_true", help="switch to a random scheme")
-    set_parser.add_argument("-n", "--name", choices=get_scheme_names(), help="the name of the scheme to switch to")
-    set_parser.add_argument("-f", "--flavour", help="the flavour to switch to")
-    set_parser.add_argument("-m", "--mode", choices=["dark", "light"], help="the mode to switch to")
-    set_parser.add_argument("-v", "--variant", choices=scheme_variants, help="the variant to switch to")
+    # `scheme` and `wallpaper` are handled by the Rust `caelestia` binary; listed here only for -h
+    command_parser.add_parser("scheme", help="manage the colour scheme")
+    command_parser.add_parser("wallpaper", help="manage the wallpaper")
 
     # Create parser for record opts
     record_parser = command_parser.add_parser("record", help="start a screen recording")
@@ -59,35 +33,4 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     record_parser.add_argument("-p", "--pause", action="store_true", help="pause/resume the recording")
     record_parser.add_argument("-c", "--clipboard", action="store_true", help="copy recording path to clipboard")
 
-    # Create parser for wallpaper opts
-    wallpaper_parser = command_parser.add_parser("wallpaper", help="manage the wallpaper")
-    wallpaper_parser.set_defaults(cmd="wallpaper.Command")
-    wallpaper_parser.add_argument(
-        "-p", "--print", nargs="?", const=_current_wallpaper(), metavar="PATH", help="print the scheme for a wallpaper"
-    )
-    wallpaper_parser.add_argument(
-        "-r", "--random", nargs="?", const=wallpapers_dir, metavar="DIR", help="switch to a random wallpaper"
-    )
-    wallpaper_parser.add_argument("-f", "--file", help="the path to the wallpaper to switch to")
-    wallpaper_parser.add_argument("-n", "--no-filter", action="store_true", help="do not filter by size")
-    wallpaper_parser.add_argument(
-        "-t",
-        "--threshold",
-        default=0.8,
-        help="the minimum percentage of the largest monitor size the image must be greater than to be selected",
-    )
-    wallpaper_parser.add_argument(
-        "-N",
-        "--no-smart",
-        action="store_true",
-        help="do not automatically change the scheme mode based on wallpaper colour",
-    )
-
     return parser, parser.parse_args()
-
-
-def _current_wallpaper() -> str | None:
-    try:
-        return wallpaper_path_path.read_text()
-    except OSError:
-        return None

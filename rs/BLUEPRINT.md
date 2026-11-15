@@ -1,8 +1,22 @@
 # caelestia CLI (Rust) blueprint
 
-Experimental Rust port of the caelestia CLI's hot commands. It runs beside the Python CLI and
-`exec`s it for everything it doesn't port. Follows the applicable stages of Google's
-`migrate-to-rust` skill; see "Skill stages" at the end.
+Rust port of the caelestia CLI's `scheme` and `wallpaper` commands, installed as `caelestia`.
+Follows the applicable stages of Google's `migrate-to-rust` skill; see "Skill stages" at the end.
+
+**Current state.** Rust is the only owner of schemes, wallpapers and app themes; Python's versions
+are deleted. The Python CLI (`caelestia-py`) keeps `shell`, `record` and `--version`, which this
+binary `exec`s, and `caelestia-py _gen` fills colour caches on a miss (first frame, thumbnail,
+`smart.json`, scheme JSON) without touching state or themes. Sections 3 to 6 describe how the port
+was built and checked against Python, before that switch; `parity.sh` is retired and `test.sh`
+replaces it. Changes since the switch:
+
+- Odd command lines (`-h`, abbreviations, missing values), odd state and config, and "no Hyprland"
+  are now Rust errors (exit 2 for usage, 1 otherwise) instead of fallbacks.
+- Bugs 1 and 4 below are fixed. `-t` parses as a float. Commands that change the scheme or
+  wallpaper hold `theme.lock` (blocking) from before they read state until they exit, and never
+  delete it. That also fixes a race: two `scheme set` at once used to leave `scheme.json` on one
+  scheme and the apps on the other, because the run that found the lock busy skipped applying.
+- `wallpaper -p` on a GIF or video uses the same cache dir as `-f` (the first frame's hash).
 
 ## 1. Audit and baseline
 
@@ -46,7 +60,7 @@ Latent bugs found in the Python (ported as-is, not fixed):
 One binary crate, `rs/` (edition 2024). Deps: `serde_json` (`preserve_order`, parsing only),
 `sha2` (SHA-NI file hashing for cache keys), `imagesize` (image headers for the `-r` size filter).
 No clap (hand-rolled argv, about 100 lines). `unsafe`: only `setsid()` for the detached
-papirus-folders call. The flock uses std's `File::try_lock`.
+papirus-folders call. The flock uses std's `File::lock`.
 
 | Python | Rust |
 | --- | --- |
@@ -138,10 +152,10 @@ plain release build is kept and PGO isn't wired in.
 | --- | --- |
 | 0 Baseline before porting | Yes: Python medians in the sandbox (section 1). No repo clone or confirmation gate (local code). |
 | 1 Audit + blueprint, latent bugs | Yes: this file, 6 sections, 6 latent bugs. |
-| 2.1 `#![forbid(unsafe_code)]` | Replaced per the brief: `unsafe` only for `setsid()`. flock uses safe `File::try_lock`. |
+| 2.1 `#![forbid(unsafe_code)]` | Replaced per the brief: `unsafe` only for `setsid()`. flock uses safe `File::lock`. |
 | 2.2 SoA/SIMD kernels, 400 LOC/file | SoA/SIMD skipped (I/O-bound CLI). Files are 200 to 660 lines; `theme.rs` is over 400 because it mirrors one 490-line Python module. |
 | 2.3 Unit/doc/proptest, 95% coverage | Skipped per the brief: the A/B parity harness is the test. |
-| 2.4 A/B parity with logged iterations | Yes: `parity.sh`, 79 cases, log above. |
+| 2.4 A/B parity with logged iterations | Yes: `parity.sh`, 79 cases, log above. Retired once Python's versions were deleted. |
 | 2.5 PGO + final benchmarks | Yes: measured, no gain, not kept. |
 | Telemetry JSON, HTML infographic | Skipped (optional; not cheap to wire in). |
 
@@ -149,6 +163,6 @@ plain release build is kept and PGO isn't wired in.
 
 ```
 cd rs && cargo build --release
-./parity.sh [case-regex]     # REBUILD=1 rebuilds the sandbox template under /tmp/caelestia-cli-sandbox
-./bench.sh [runs] [binary]
+./test.sh                    # end-to-end checks; REBUILD=1 rebuilds the sandbox under /tmp/caelestia-cli-sandbox
+./bench.sh [runs] [binary]   # warm-cache timings
 ```

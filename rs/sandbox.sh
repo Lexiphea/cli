@@ -1,4 +1,4 @@
-# Shared sandbox for parity.sh and bench.sh. Source it; don't run it.
+# Shared sandbox for test.sh and bench.sh. Source it; don't run it.
 #
 # Every run happens inside `unshare -rm` with:
 #   - an empty fake /dev/pts (inside the sandbox), so terminal colour sequences never reach real terminals
@@ -41,7 +41,7 @@ EOF
     for c in dconf killall sass notify-send sudo papirus-folders ffmpeg ffprobe chromium; do
         ln -s _shim "$BIN/$c"
     done
-    # Python CLI wrapper: records that a fallback happened, then runs the real CLI
+    # Python CLI wrapper: records each call (fallbacks and `_gen` cache fills), then runs the real CLI
     cat > "$BIN/caelestia-py" << EOF
 #!/bin/bash
 echo fallback >> "$FALLBACK_MARK"
@@ -139,7 +139,7 @@ EOF
     ln -s "$WALLS/Live/singularity-cosmic-vortex-moewalls-com.mp4" "$SB/walls/video/vortex.mp4"
     cp "$w/current.jpg" "$SB/walls/only/current.jpg"
 
-    # Warm caches the way the Python CLI would, so the matching cases can run natively.
+    # Warm the caches (Rust has Python fill them), so the warm cases don't need Python.
     # Only cache/ is kept; state and generated theme files are rebuilt below.
     local keep_cfg=$SB/config/caelestia/cli.json
     echo '{"theme": {"enableTerm": false, "enableHypr": false, "enableDiscord": false, "enableGtk": false, "enableQt": false, "enableChromium": false}}' > "$keep_cfg.warm"
@@ -158,7 +158,7 @@ EOF
         "scheme set -v tonalspot -m dark" \
         "scheme set -f hard"; do
         # shellcheck disable=SC2086
-        sandbox_run "$PY_BIN" $args > /dev/null || echo ":: warm-up failed: $args" >&2
+        sandbox_run "$RS_BIN" $args > /dev/null || echo ":: warm-up failed: $args" >&2
     done
     mv "$keep_cfg.real" "$keep_cfg"
 

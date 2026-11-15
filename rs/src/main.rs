@@ -1,8 +1,7 @@
-//! caelestia: the caelestia CLI's hot commands (`scheme get|list|set`, `wallpaper`) in Rust.
+//! caelestia: the caelestia CLI. `scheme` and `wallpaper`, including every app theme, live here.
 //!
-//! Anything else, and any case that needs work not ported here (colour generation, thumbnails,
-//! first frames, odd argv or state), `exec`s the Python CLI with the same argv. That decision is
-//! always made before any side effect.
+//! The Python CLI (`caelestia-py`) still runs every other command, which this binary `exec`s with
+//! the same argv, and generates colours, thumbnails and first frames on a cache miss (`_gen`).
 
 mod scheme;
 mod theme;
@@ -20,7 +19,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
 use theme::Config;
-use util::{Paths, flush_out, out};
+use util::{Paths, flush_out, out, python};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -45,9 +44,16 @@ fn is_value(t: &str) -> bool {
     }
 }
 
-/// The subset of argparse the hot commands use. Anything else (abbreviations, `--`, `-h`,
-/// positionals, missing values) is left to Python.
+fn label(spec: &Spec) -> String {
+    if spec.0 == '\0' { format!("--{}", spec.1) } else { format!("-{}/--{}", spec.0, spec.1) }
+}
+
+/// The subset of argparse these commands use. No abbreviations, `--` or positionals.
 fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
+    if toks.iter().any(|t| t == "-h" || t == "--help") {
+        return Err(Stop::Help);
+    }
+    let unknown = |t: &str| Stop::Usage(format!("unrecognized arguments: {t}"));
     let mut opts = Opts::new();
     let mut i = 0;
     while i < toks.len() {
@@ -56,39 +62,43 @@ fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
         let (mut spec, mut explicit): (&Spec, Option<&str>);
         if let Some(long) = t.strip_prefix("--") {
             let (name, val) = long.split_once('=').map_or((long, None), |(a, b)| (a, Some(b)));
-            spec = specs.iter().find(|s| s.1 == name).ok_or(Stop::Fallback)?;
+            spec = specs.iter().find(|s| s.1 == name).ok_or_else(|| unknown(t))?;
             explicit = val;
         } else if t.len() >= 2 && t.starts_with('-') && !is_value(t) {
             let mut chars = t[1..].chars();
             let c = chars.next().expect("len >= 2");
-            spec = specs.iter().find(|s| s.0 == c).ok_or(Stop::Fallback)?;
+            spec = specs.iter().find(|s| s.0 == c).ok_or_else(|| unknown(t))?;
             let rest = chars.as_str();
             explicit = if rest.is_empty() { None } else { Some(rest.strip_prefix('=').unwrap_or(rest)) };
             // Combined flags: `-nN`
             while spec.2 == Kind::Flag && explicit.is_some() {
                 if t[1..].contains('=') {
-                    return Err(Stop::Fallback);
+                    return Err(unknown(t));
                 }
                 opts.insert(spec.1, None);
                 let r = explicit.expect("checked");
                 let mut chars = r.chars();
                 let c = chars.next().expect("non-empty");
-                spec = specs.iter().find(|s| s.0 == c).ok_or(Stop::Fallback)?;
+                spec = specs.iter().find(|s| s.0 == c).ok_or_else(|| unknown(t))?;
                 explicit = Some(chars.as_str()).filter(|s| !s.is_empty());
             }
         } else {
-            return Err(Stop::Fallback);
+            return Err(unknown(t));
         }
         let next_is_value = toks.get(i).is_some_and(|n| is_value(n));
         let value = match (spec.2, explicit) {
-            (Kind::Flag, Some(_)) => return Err(Stop::Fallback),
+            (Kind::Flag, Some(v)) => {
+                return Err(Stop::Usage(format!("argument {}: ignored explicit argument '{v}'", label(spec))));
+            }
             (Kind::Flag, None) => None,
             (_, Some(v)) => Some(v.to_owned()),
             (_, None) if next_is_value => {
                 i += 1;
                 Some(toks[i - 1].clone())
             }
-            (Kind::Value, None) => return Err(Stop::Fallback),
+            (Kind::Value, None) => {
+                return Err(Stop::Usage(format!("argument {}: expected one argument", label(spec))));
+            }
             (_, None) => None,
         };
         opts.insert(spec.1, value);
@@ -98,8 +108,7 @@ fn parse(toks: &[String], specs: &[Spec]) -> Result<Opts, Stop> {
 
 /// Replace this process with the Python CLI, same argv.
 fn fallback(argv: &[OsString]) -> ! {
-    // The Python CLI's entry point is `caelestia-py`, never `caelestia`, which is this binary
-    let py = env::var_os("CAELESTIA_PY").unwrap_or_else(|| "caelestia-py".into());
+    let py = python();
     let err = Command::new(&py).args(argv).exec();
     eprintln!("caelestia: cannot run {}: {err}", py.display());
     process::exit(127);
@@ -136,6 +145,8 @@ fn run_effects(effects: Vec<Effect>) -> io::Result<()> {
 
 /// What a plan leaves to do after its effects.
 enum Next {
+    /// Not ours: run the Python CLI
+    Python,
     Done,
     Apply(Config),
     ApplyWall(Config, wallpaper::WallSet),
@@ -202,6 +213,7 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
             choice("-n/--name", &a.name, &names.iter().map(String::as_str).collect::<Vec<_>>());
             choice("-m/--mode", &a.mode, &["dark", "light"]);
             choice("-v/--variant", &a.variant, &VARIANTS);
+            ctx.lock()?;
             if scheme::set(ctx, &a)? { Ok(Next::Apply(theme_ready(ctx)?)) } else { Ok(Next::Done) }
         }
         (Some("wallpaper"), _) => {
@@ -225,7 +237,7 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
             };
             let random = match o.get("random") {
                 Some(Some(v)) => Some(v.clone()),
-                Some(None) => Some(ctx.p.wallpapers.to_str().ok_or(Stop::Fallback)?.to_owned()),
+                Some(None) => Some(ctx.p.wallpapers.to_string_lossy().into_owned()),
                 None => None,
             };
             let file = o.get("file").cloned().flatten();
@@ -234,15 +246,19 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
                 wallpaper::print_colours(ctx, &p, no_smart)?;
                 Ok(Next::Done)
             } else if let Some(f) = file.filter(|s| !s.is_empty()) {
+                ctx.lock()?;
                 let set = wallpaper::set(ctx, Path::new(&f), no_smart)?;
                 Ok(Next::ApplyWall(theme_ready(ctx)?, set))
             } else if let Some(dir) = random.filter(|s| !s.is_empty()) {
-                let a = wallpaper::RandomArgs {
-                    dir: &dir,
-                    no_filter: o.contains_key("no-filter"),
-                    threshold_given: o.contains_key("threshold"),
-                    no_smart,
+                let threshold = match o.get("threshold").cloned().flatten() {
+                    Some(t) => t
+                        .parse()
+                        .map_err(|_| Stop::Usage(format!("argument -t/--threshold: invalid float value: '{t}'")))?,
+                    None => 0.8,
                 };
+                let a =
+                    wallpaper::RandomArgs { dir: &dir, no_filter: o.contains_key("no-filter"), threshold, no_smart };
+                ctx.lock()?;
                 let set = wallpaper::random(ctx, &a)?;
                 Ok(Next::ApplyWall(theme_ready(ctx)?, set))
             } else {
@@ -251,14 +267,32 @@ fn plan(ctx: &mut Ctx, args: &[String]) -> Result<Next, Stop> {
                 Ok(Next::Done)
             }
         }
-        _ => Err(Stop::Fallback),
+        (Some("scheme"), None) => Err(Stop::Help),
+        (Some("scheme"), Some(c)) if c.starts_with('-') => parse(&args[1..], &[]).map(|_| Next::Done),
+        (Some("scheme"), Some(c)) => {
+            Err(Stop::Usage(format!("argument: invalid choice: '{c}' (choose from list, get, set)")))
+        }
+        _ => Ok(Next::Python),
+    }
+}
+
+/// argparse's `-h` output, for the command in `args`.
+fn help(args: &[String]) -> &'static str {
+    match (args.first().map(String::as_str), args.get(1).map(String::as_str)) {
+        (Some("scheme"), Some("list")) => include_str!("help/scheme-list.txt"),
+        (Some("scheme"), Some("get")) => include_str!("help/scheme-get.txt"),
+        (Some("scheme"), Some("set")) => include_str!("help/scheme-set.txt"),
+        (Some("wallpaper"), _) => include_str!("help/wallpaper.txt"),
+        _ => include_str!("help/scheme.txt"),
     }
 }
 
 /// The wallpaper post hook, after `apply_colours`.
 fn wall_hook(ctx: &Ctx, cfg: &Config, set: &wallpaper::WallSet) -> io::Result<()> {
     cfg.reread_warn();
-    let Ok(Some(hook)) = cfg.section("wallpaper").and_then(|w| theme::post_hook(&w)) else { return Ok(()) };
+    let Ok(Some(hook)) = cfg.section("wallpaper").and_then(|w| theme::post_hook(&w)) else {
+        return Ok(());
+    };
     Command::new("/bin/sh")
         .arg("-c")
         .arg(hook)
@@ -272,14 +306,28 @@ fn wall_hook(ctx: &Ctx, cfg: &Config, set: &wallpaper::WallSet) -> io::Result<()
 
 fn main() {
     let argv: Vec<OsString> = env::args_os().skip(1).collect();
+    let ours = argv.first().is_some_and(|a| a == "scheme" || a == "wallpaper");
     let Some(args) = argv.iter().map(|a| a.to_str().map(str::to_owned)).collect::<Option<Vec<_>>>() else {
+        if ours {
+            usage_error("arguments must be UTF-8".into())
+        }
         fallback(&argv)
     };
     let mut ctx = Ctx::new(Paths::from_env());
     let next = match plan(&mut ctx, &args) {
+        Ok(Next::Python) => fallback(&argv),
         Ok(n) => n,
-        Err(Stop::Fallback | Stop::Missing) => fallback(&argv),
-        Err(Stop::Fail(msg)) => {
+        Err(Stop::Help) => {
+            out(help(&args).trim_end());
+            flush_out();
+            process::exit(0);
+        }
+        Err(Stop::Usage(msg)) => usage_error(msg),
+        Err(e @ (Stop::Fail(_) | Stop::Missing)) => {
+            let msg = match e {
+                Stop::Fail(m) => m,
+                _ => "file not found".into(),
+            };
             let r = run_effects(std::mem::take(&mut ctx.effects));
             flush_out();
             eprintln!("caelestia: {}", r.err().map_or(msg, |e| e.to_string()));
@@ -287,7 +335,7 @@ fn main() {
         }
     };
     let r = run_effects(std::mem::take(&mut ctx.effects)).and_then(|()| match &next {
-        Next::Done => Ok(()),
+        Next::Python | Next::Done => Ok(()),
         Next::Apply(cfg) => theme::apply_colours(&ctx.p, cfg, ctx.cur()),
         Next::ApplyWall(cfg, set) => {
             theme::apply_colours(&ctx.p, cfg, ctx.cur())?;

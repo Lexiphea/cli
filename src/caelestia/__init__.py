@@ -1,3 +1,4 @@
+import sys
 from importlib import import_module
 
 from caelestia.parser import parse_args
@@ -5,6 +6,10 @@ from caelestia.utils.io import log
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["_gen"]:
+        from caelestia.generate import main as generate
+
+        return generate(sys.argv[2:])
     try:
         parser, args = parse_args()
         if args.version:

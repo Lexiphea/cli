@@ -1,0 +1,8 @@
+usage: caelestia scheme get [-h] [-n] [-f] [-m] [-v]
+
+options:
+  -h, --help     show this help message and exit
+  -n, --name     print the current scheme name
+  -f, --flavour  print the current scheme flavour
+  -m, --mode     print the current scheme mode
+  -v, --variant  print the current scheme variant

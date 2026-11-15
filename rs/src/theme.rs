@@ -1,13 +1,13 @@
 //! App themes: `utils/theme.py` and `utils/colour.py`.
 
-use crate::scheme::{Scheme, Stop};
+use crate::scheme::{Scheme, Stop, fail};
 use crate::util::{
     Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, out, py_int16, read_text,
     truthy, which,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
@@ -40,7 +40,7 @@ const SEQUENCE_KEYS: [&str; 21] = [
     "tertiary",
 ];
 
-/// `cli.json`, checked up front so the apply step can't hit a shape Python would crash on.
+/// `cli.json`, checked up front so a bad value fails before anything is written.
 #[derive(Default)]
 pub struct Config {
     /// Invalid JSON: Python warns (on stdout) each time it reads the config, and uses `{}`.
@@ -52,16 +52,16 @@ const WARN_INVALID: &str = "\x1b[33m:: Warning: failed to parse config, invalid 
 
 impl Config {
     pub fn load(p: &Paths) -> Result<Config, Stop> {
-        let bytes = match fs::read(p.c_config.join("cli.json")) {
+        let path = p.c_config.join("cli.json");
+        let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Config::default()),
-            Err(_) => return Err(Stop::Fallback),
+            Err(e) => return Err(fail(format!("cannot read {}: {e}", path.display()))),
         };
-        let text = String::from_utf8(bytes).map_err(|_| Stop::Fallback)?;
-        match serde_json::from_str(&text) {
-            Ok(Value::Object(root)) => Ok(Config { invalid: false, root }),
-            Ok(_) => Err(Stop::Fallback),
-            Err(_) => Ok(Config { invalid: true, root: Map::new() }),
+        match String::from_utf8(bytes).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+            Some(Value::Object(root)) => Ok(Config { invalid: false, root }),
+            Some(_) => Err(fail("cli.json must be a JSON object")),
+            None => Ok(Config { invalid: true, root: Map::new() }),
         }
     }
 
@@ -70,7 +70,7 @@ impl Config {
         match self.root.get(key) {
             None => Ok(Map::new()),
             Some(Value::Object(m)) => Ok(m.clone()),
-            Some(_) => Err(Stop::Fallback),
+            Some(_) => Err(fail(format!("cli.json: \"{key}\" must be an object"))),
         }
     }
 
@@ -85,7 +85,9 @@ impl Config {
 /// A truthy `postHook` must be a string.
 pub fn post_hook(section: &Map<String, Value>) -> Result<Option<String>, Stop> {
     match section.get("postHook") {
-        Some(v) if truthy(v) => v.as_str().map(|s| Some(s.to_owned())).ok_or(Stop::Fallback),
+        Some(v) if truthy(v) => {
+            v.as_str().map(|s| Some(s.to_owned())).ok_or_else(|| fail("cli.json: postHook must be a string"))
+        }
         _ => Ok(None),
     }
 }
@@ -104,15 +106,17 @@ fn icon_theme(cfg: &Map<String, Value>, mode: &str) -> Result<Option<String>, St
     match v {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(Stop::Fallback),
+        Some(_) => Err(fail("cli.json: theme.iconTheme must be a string")),
     }
 }
 
 fn discord_clients(cfg: &Map<String, Value>) -> Result<Vec<String>, Stop> {
     match cfg.get("discordClients") {
         None => Ok(DISCORD_CLIENTS.iter().map(|s| s.to_string()).collect()),
-        Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_owned).ok_or(Stop::Fallback)).collect(),
-        Some(_) => Err(Stop::Fallback),
+        Some(Value::Array(a)) if a.iter().all(Value::is_string) => {
+            Ok(a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        }
+        Some(_) => Err(fail("cli.json: theme.discordClients must be a list of strings")),
     }
 }
 
@@ -120,11 +124,13 @@ fn check(cfg: &Map<String, Value>, key: &str) -> bool {
     cfg.get(key).is_none_or(truthy)
 }
 
-/// Everything about the config and colours that would crash `apply_colours` mid-way in Python.
+/// Everything about the config and colours that would otherwise fail half-way through `apply_colours`.
 pub fn precheck(cfg: &Config, s: &Scheme) -> Result<(), Stop> {
     let theme = cfg.section("theme")?;
-    if check(&theme, "enableTerm") && SEQUENCE_KEYS.iter().any(|k| !s.colours.contains_key(*k)) {
-        return Err(Stop::Fallback);
+    if check(&theme, "enableTerm")
+        && let Some(k) = SEQUENCE_KEYS.iter().find(|k| !s.colours.contains_key(**k))
+    {
+        return Err(fail(format!("the scheme has no {k} colour")));
     }
     discord_clients(&theme)?;
     icon_theme(&theme, &s.mode)?;
@@ -571,150 +577,123 @@ fn log(name: &str, r: Res) {
     }
 }
 
-/// `theme.apply_colours`: every enabled app theme in parallel under `theme.lock`, then the post hook.
+/// `theme.apply_colours`: every enabled app theme in parallel, then the post hook. The caller holds
+/// the theme lock (see `main.rs`).
 pub fn apply_colours(p: &Paths, cfg: &Config, s: &Scheme) -> io::Result<()> {
-    fs::create_dir_all(&p.c_state)?;
-    let lock_path = p.c_state.join("theme.lock");
-    let r = (|| -> io::Result<()> {
-        let lock = File::create(&lock_path)?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(TryLockError::Error(e)) => return Err(e),
+    if cfg.invalid {
+        out(WARN_INVALID);
+    }
+    // Validated in precheck(), so these can't fail here
+    let theme = cfg.section("theme").unwrap_or_default();
+    let clients = discord_clients(&theme).unwrap_or_default();
+    let icon = icon_theme(&theme, &s.mode).unwrap_or_default();
+    let (c, mode, t) = (&s.colours, s.mode.as_str(), p.templates());
+    let on = |k: &str| check(&theme, k);
+    let warp = if mode == "dark" { "darker" } else { "lighter" };
+    thread::scope(|sc| {
+        if on("enableTerm") {
+            let seq = gen_sequences(c);
+            sc.spawn(move || log("apply_terms", apply_terms(p, &seq)));
         }
-        if cfg.invalid {
-            out(WARN_INVALID);
+        if on("enableHypr") {
+            let conf = if is_lua_config() { gen_lua(c) } else { gen_conf(c) };
+            sc.spawn(move || log("apply_hypr", apply_hypr(p, &conf)));
         }
-        // Validated in precheck(), so these can't fail here
-        let theme = cfg.section("theme").unwrap_or_default();
-        let clients = discord_clients(&theme).unwrap_or_default();
-        let icon = icon_theme(&theme, &s.mode).unwrap_or_default();
-        let (c, mode, t) = (&s.colours, s.mode.as_str(), p.templates());
-        let on = |k: &str| check(&theme, k);
-        let warp = if mode == "dark" { "darker" } else { "lighter" };
-        thread::scope(|sc| {
-            if on("enableTerm") {
-                let seq = gen_sequences(c);
-                sc.spawn(move || log("apply_terms", apply_terms(p, &seq)));
+        if on("enableDiscord") {
+            let (scss, clients) = (gen_scss(c), &clients);
+            sc.spawn(move || log("apply_discord", apply_discord(p, &scss, clients)));
+        }
+        // (config key, fn name, template, add '#', destination, extra replacements, app to signal)
+        let simple = [
+            (
+                "enableSpicetify",
+                "apply_spicetify",
+                format!("spicetify-{mode}.ini"),
+                false,
+                p.config.join("spicetify/Themes/caelestia/color.ini"),
+                vec![],
+                None,
+            ),
+            (
+                "enablePandora",
+                "apply_pandora",
+                "pandora.json".into(),
+                true,
+                p.data.join("PandoraLauncher/themes/caelestia.json"),
+                vec![("{{ $mode }}", mode)],
+                None,
+            ),
+            (
+                "enableFuzzel",
+                "apply_fuzzel",
+                "fuzzel.ini".into(),
+                false,
+                p.config.join("fuzzel/fuzzel.ini"),
+                vec![],
+                None,
+            ),
+            (
+                "enableBtop",
+                "apply_btop",
+                "btop.theme".into(),
+                true,
+                p.config.join("btop/themes/caelestia.theme"),
+                vec![],
+                Some("btop"),
+            ),
+            (
+                "enableNvtop",
+                "apply_nvtop",
+                "nvtop.colors".into(),
+                true,
+                p.config.join("nvtop/nvtop.colors"),
+                vec![],
+                None,
+            ),
+            ("enableHtop", "apply_htop", "htop.theme".into(), true, p.config.join("htop/htoprc"), vec![], Some("htop")),
+            (
+                "enableWarp",
+                "apply_warp",
+                "warp.yaml".into(),
+                true,
+                p.data.join("warp-terminal/themes/caelestia.yaml"),
+                vec![("{{ $warp_mode }}", warp)],
+                None,
+            ),
+            ("enableCava", "apply_cava", "cava.conf".into(), true, p.config.join("cava/config"), vec![], Some("cava")),
+        ];
+        for (key, name, template, hash, dest, extra, signal) in simple {
+            if on(key) {
+                let template = t.join(template);
+                sc.spawn(move || {
+                    let mut r = apply_simple(c, template, hash, dest, &extra);
+                    if let (Ok(()), Some(app)) = (&r, signal) {
+                        r = run_quiet(&["killall", "-USR2", app]);
+                    }
+                    log(name, r);
+                });
             }
-            if on("enableHypr") {
-                let conf = if is_lua_config() { gen_lua(c) } else { gen_conf(c) };
-                sc.spawn(move || log("apply_hypr", apply_hypr(p, &conf)));
-            }
-            if on("enableDiscord") {
-                let (scss, clients) = (gen_scss(c), &clients);
-                sc.spawn(move || log("apply_discord", apply_discord(p, &scss, clients)));
-            }
-            // (config key, fn name, template, add '#', destination, extra replacements, app to signal)
-            let simple = [
-                (
-                    "enableSpicetify",
-                    "apply_spicetify",
-                    format!("spicetify-{mode}.ini"),
-                    false,
-                    p.config.join("spicetify/Themes/caelestia/color.ini"),
-                    vec![],
-                    None,
-                ),
-                (
-                    "enablePandora",
-                    "apply_pandora",
-                    "pandora.json".into(),
-                    true,
-                    p.data.join("PandoraLauncher/themes/caelestia.json"),
-                    vec![("{{ $mode }}", mode)],
-                    None,
-                ),
-                (
-                    "enableFuzzel",
-                    "apply_fuzzel",
-                    "fuzzel.ini".into(),
-                    false,
-                    p.config.join("fuzzel/fuzzel.ini"),
-                    vec![],
-                    None,
-                ),
-                (
-                    "enableBtop",
-                    "apply_btop",
-                    "btop.theme".into(),
-                    true,
-                    p.config.join("btop/themes/caelestia.theme"),
-                    vec![],
-                    Some("btop"),
-                ),
-                (
-                    "enableNvtop",
-                    "apply_nvtop",
-                    "nvtop.colors".into(),
-                    true,
-                    p.config.join("nvtop/nvtop.colors"),
-                    vec![],
-                    None,
-                ),
-                (
-                    "enableHtop",
-                    "apply_htop",
-                    "htop.theme".into(),
-                    true,
-                    p.config.join("htop/htoprc"),
-                    vec![],
-                    Some("htop"),
-                ),
-                (
-                    "enableWarp",
-                    "apply_warp",
-                    "warp.yaml".into(),
-                    true,
-                    p.data.join("warp-terminal/themes/caelestia.yaml"),
-                    vec![("{{ $warp_mode }}", warp)],
-                    None,
-                ),
-                (
-                    "enableCava",
-                    "apply_cava",
-                    "cava.conf".into(),
-                    true,
-                    p.config.join("cava/config"),
-                    vec![],
-                    Some("cava"),
-                ),
-            ];
-            for (key, name, template, hash, dest, extra, signal) in simple {
-                if on(key) {
-                    let template = t.join(template);
-                    sc.spawn(move || {
-                        let mut r = apply_simple(c, template, hash, dest, &extra);
-                        if let (Ok(()), Some(app)) = (&r, signal) {
-                            r = run_quiet(&["killall", "-USR2", app]);
-                        }
-                        log(name, r);
-                    });
-                }
-            }
-            let icon = icon.as_deref();
-            if on("enableGtk") {
-                sc.spawn(move || log("apply_gtk", apply_gtk(p, c, mode, icon)));
-            }
-            if on("enableQt") {
-                sc.spawn(move || log("apply_qt", apply_qt(p, c, mode, icon)));
-            }
-            if on("enableChromium") {
-                sc.spawn(move || log("apply_chromium", apply_chromium(c)));
-            }
-            if on("enableZed") {
-                sc.spawn(move || log("apply_zed", apply_zed(p, c, mode)));
-            }
-            sc.spawn(move || log("apply_user_templates", apply_user_templates(p, c, mode)));
-        });
+        }
+        let icon = icon.as_deref();
+        if on("enableGtk") {
+            sc.spawn(move || log("apply_gtk", apply_gtk(p, c, mode, icon)));
+        }
+        if on("enableQt") {
+            sc.spawn(move || log("apply_qt", apply_qt(p, c, mode, icon)));
+        }
+        if on("enableChromium") {
+            sc.spawn(move || log("apply_chromium", apply_chromium(c)));
+        }
+        if on("enableZed") {
+            sc.spawn(move || log("apply_zed", apply_zed(p, c, mode)));
+        }
+        sc.spawn(move || log("apply_user_templates", apply_user_templates(p, c, mode)));
+    });
 
-        if let Ok(Some(hook)) = post_hook(&theme) {
-            Command::new("/bin/sh").arg("-c").arg(hook).envs(scheme_env(s)).stderr(Stdio::null()).status()?;
-        }
-        Ok(())
-    })();
-    let _ = fs::remove_file(&lock_path);
-    r
+    if let Ok(Some(hook)) = post_hook(&theme) {
+        Command::new("/bin/sh").arg("-c").arg(hook).envs(scheme_env(s)).stderr(Stdio::null()).status()?;
+    }
+    Ok(())
 }
 
 /// The `SCHEME_*` variables post hooks get.
