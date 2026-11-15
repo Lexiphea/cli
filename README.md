@@ -1,6 +1,8 @@
 # caelestia-cli
 
-The main control script for the Caelestia dotfiles.
+A Rust fork of [caelestia-dots/cli](https://github.com/caelestia-dots/cli), the main control script for
+the Caelestia dotfiles. Same commands, config and templates; no Python. It lives as a submodule of
+[Lexiphea/lexiphea-dotfiles](https://github.com/Lexiphea/lexiphea-dotfiles).
 
 <details><summary id="dependencies">External dependencies</summary>
 
@@ -16,17 +18,19 @@ The main control script for the Caelestia dotfiles.
 
 ## Installation
 
-This is a Rust port of upstream's Python CLI, vendored in the dotfiles. Install [`rust`](https://www.rust-lang.org)
-and the [dependencies](#dependencies), then build it and link the binary onto your `PATH`:
+Install [`rust`](https://www.rust-lang.org) and the [dependencies](#dependencies), then build it and link the
+binary onto your `PATH`:
 
 ```sh
+git clone https://github.com/Lexiphea/cli.git caelestia-cli && cd caelestia-cli
 cargo build --release --manifest-path rs/Cargo.toml
 ln -s "$PWD/rs/target/release/caelestia" ~/.local/bin/caelestia
 sudo cp completions/caelestia.fish /usr/share/fish/vendor_completions.d/caelestia.fish
 ```
 
 The binary reads its templates from `src/caelestia/data` in this checkout, so keep it where it was built.
-`setup-dotfiles.sh` does all of this, and its git hook rebuilds the binary after pulls that change `rs/`.
+In the dotfiles, `setup-dotfiles.sh` does all of this, and its git hook rebuilds the binary after pulls
+that move this submodule.
 
 ### Additional steps
 

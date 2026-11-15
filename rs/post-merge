@@ -1,7 +1,9 @@
 #!/bin/sh
-# Git post-merge hook, linked into .git/hooks by setup-dotfiles.sh. ~/.local/bin/caelestia runs the
-# build output directly, so rebuild it whenever a pull changes the Rust CLI.
-git diff --quiet ORIG_HEAD HEAD -- caelestia-cli/rs && exit 0
-echo "caelestia-cli/rs changed, rebuilding the caelestia binary..."
+# Git post-merge hook for the dotfiles repo, linked into its .git/hooks by setup-dotfiles.sh.
+# ~/.local/bin/caelestia runs the build output directly, so rebuild it whenever a pull moves this
+# submodule. Update the submodule first: a plain `git pull` leaves it on the old commit.
+git diff --quiet ORIG_HEAD HEAD -- caelestia-cli && exit 0
+git submodule update --init caelestia-cli || exit 0
+echo "caelestia-cli changed, rebuilding the caelestia binary..."
 cargo build --release --quiet --manifest-path caelestia-cli/rs/Cargo.toml ||
     echo "caelestia: build failed, the previous binary is still in place" >&2
