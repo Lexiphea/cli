@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-caelestia = "caelestia:main"
+caelestia-py = "caelestia:main"
 
 [tool.hatch.build.targets.sdist]
 only-include = [

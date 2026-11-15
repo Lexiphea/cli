@@ -1,0 +1,17 @@
+[package]
+name = "caelestia"
+version = "0.1.0"
+edition = "2024"
+description = "The caelestia CLI's hot commands in Rust; execs the Python CLI (caelestia-py) for the rest"
+license = "GPL-3.0-only"
+
+[dependencies]
+imagesize = "0.14"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"
