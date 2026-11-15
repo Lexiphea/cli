@@ -40,6 +40,3 @@ for c in "${cmds[@]}"; do
     # shellcheck disable=SC2086
     printf '%-62s %8s\n' "${c/$W\//}" "$(median "$RS" $c)"
 done
-if [[ -s $FALLBACK_MARK ]]; then
-    echo ":: warning: some runs called Python ($(wc -l < "$FALLBACK_MARK") calls), so a cache was cold" >&2
-fi

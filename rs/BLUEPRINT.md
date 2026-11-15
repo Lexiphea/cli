@@ -132,18 +132,22 @@ Extra check: `imagesize` (used for the `-r` size filter) and Pillow give identic
 
 ## Results
 
-Release build (fat LTO, `codegen-units=1`, `panic=abort`), `rs/bench.sh 21`, sandbox, median ms:
+`rs/bench.sh 21`, sandbox, median ms, warm caches. "Original" is upstream's Python as first vendored;
+"tuned" is the last pure-Python version (lazy imports, parallel theme writes, no fsync).
 
-| command | Python | Rust | speedup |
-| --- | --- | --- | --- |
-| spawn floor | | 0.33 | |
-| `scheme get` | 37.2 | 0.63 | 59x |
-| `scheme list` | 39.5 | 2.0 | 20x |
-| `scheme set --notify -m dark` | 52.9 | 10.1 | 5.3x |
-| `wallpaper -p <jpg>` | 40.2 | 2.2 | 18x |
-| `wallpaper -f <jpg>` | 55.8 | 12.2 | 4.6x |
-| `wallpaper -f <mp4>` | 62.1 | 18.9 | 3.3x |
-| `wallpaper -r <dir> -n` | 56.1 | 11.7 | 4.8x |
+| command | original Python | tuned Python | Rust | vs original |
+| --- | --- | --- | --- | --- |
+| spawn floor | 0.31 | 0.27 | 0.28 | |
+| `scheme get` | 50.8 | 30.8 | 0.60 | 85x |
+| `scheme list` | 52.9 | 31.6 | 1.8 | 29x |
+| `scheme set --notify -m dark` | 75.5 | 42.8 | 8.4 | 9x |
+| `wallpaper -p <jpg>` | 52.4 | 32.8 | 2.0 | 27x |
+| `wallpaper -f <jpg>` | 77.9 | 44.8 | 10.0 | 7.8x |
+| `wallpaper -f <mp4>` | not supported | 51.0 | 15.9 | 3.2x vs tuned |
+| `wallpaper -r <dir> -n` | 76.8 | 45.0 | 9.7 | 7.9x |
+
+New wallpaper (empty cache, `wallpaper -p`, median of 5, ms): 4K PNG 198 / 184 / 34; 2000x1366
+JPEG 118 / 104 / 33; MP4 not supported / 967 / 831 (ffmpeg's first frame dominates).
 
 `set`/`-f`/`-r` sit on the `sass` floor (about 9 ms); `-p` and `-f` also hash the wallpaper
 (SHA-NI; about 7 ms for the 11 MB video).
