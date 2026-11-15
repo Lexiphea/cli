@@ -2,8 +2,8 @@
 
 use crate::scheme::{Scheme, Stop, fail};
 use crate::util::{
-    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, make_temp_dir, new_session, out,
-    py_int16, read_text, truthy, which,
+    Colours, Paths, atomic_write, char_slice, dumps, file_name, is_lua_config, new_session, out, py_int16, read_text,
+    truthy, which,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -154,8 +154,34 @@ fn gen_lua(c: &Colours) -> String {
     format!("return {{\n{body}}}")
 }
 
-fn gen_scss(c: &Colours) -> String {
-    colours_iter(c).map(|(n, v)| format!("${n}: #{v};\n")).collect()
+/// The Discord theme. Its fields are `{{ $name }}`, `{{ $name lightness P }}` (Sass's `color.scale`:
+/// HSL lightness P% of the way to white, or to black when negative) and `{{ $name alpha A }}`.
+fn gen_discord(c: &Colours, template: &Path) -> io::Result<String> {
+    Ok(replace_fields(&read_text(template)?, |field| {
+        let words: Vec<&str> = field.split_whitespace().collect();
+        let hex = c.get(words.first()?.strip_prefix('$')?)?.as_str()?;
+        let n = u32::from_str_radix(hex.get(..6)?, 16).ok()?;
+        let rgb = [16, 8, 0].map(|s| n >> s & 0xff);
+        Some(match words[1..] {
+            [] => format!("#{hex}"),
+            ["lightness", p] => {
+                let p = p.parse::<f64>().ok()? / 100.0;
+                let rgb = rgb.map(|v| f64::from(v) / 255.0);
+                let l = (rgb.iter().copied().fold(0.0, f64::max) + rgb.iter().copied().fold(1.0, f64::min)) / 2.0;
+                let l2 = if p > 0.0 { l + (1.0 - l) * p } else { l + l * p };
+                // Each channel's distance from l, over the most chroma l allows, depends only on hue and
+                // saturation, so it carries over to the new lightness
+                let room = |l: f64| 1.0 - (2.0 * l - 1.0).abs();
+                let [r, g, b] = rgb.map(|v| {
+                    let v = if room(l) == 0.0 { l2 } else { l2 + (v - l) / room(l) * room(l2) };
+                    (v * 255.0).round() as u8
+                });
+                format!("#{r:02x}{g:02x}{b:02x}")
+            }
+            ["alpha", a] => format!("rgba({}, {}, {}, {a})", rgb[0], rgb[1], rgb[2]),
+            _ => return None,
+        })
+    }))
 }
 
 fn gen_replace(c: &Colours, template: &Path, hash: bool) -> io::Result<String> {
@@ -349,34 +375,12 @@ fn apply_hypr(p: &Paths, conf: &str) -> Res {
     write(p.config.join(format!("hypr/scheme/current.{ext}")), conf)
 }
 
-fn apply_discord(p: &Paths, scss: &str, clients: &[String]) -> Res {
-    let tmp = make_temp_dir("w").map_err(e2s)?;
-    let conf = run_sass(p, &tmp, scss);
-    let _ = fs::remove_dir_all(&tmp);
-    let conf = conf?;
+fn apply_discord(p: &Paths, c: &Colours, clients: &[String]) -> Res {
+    let conf = gen_discord(c, &p.templates().join("discord.css")).map_err(e2s)?;
     for client in clients {
         write(p.config.join(client).join("themes/caelestia.theme.css"), &conf)?;
     }
     Ok(())
-}
-
-/// `subprocess.check_output(["sass", "-I", tmp, discord.scss], text=True)`
-fn run_sass(p: &Paths, tmp: &Path, scss: &str) -> Result<String, String> {
-    fs::write(tmp.join("_colours.scss"), scss).map_err(e2s)?;
-    let o = Command::new("sass")
-        .arg("-I")
-        .arg(tmp)
-        .arg(p.templates().join("discord.scss"))
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(e2s)?
-        .wait_with_output()
-        .map_err(e2s)?;
-    if !o.status.success() {
-        return Err(format!("sass exited with {}", o.status));
-    }
-    let s = String::from_utf8(o.stdout).map_err(|e| e.to_string())?;
-    Ok(s.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 fn apply_simple(c: &Colours, template: PathBuf, hash: bool, dest: PathBuf, extra: &[(&str, &str)]) -> Res {
@@ -396,13 +400,19 @@ fn apply_gtk(p: &Paths, c: &Colours, mode: &str, icon: Option<&str>) -> Res {
     }
     let icon = icon.map_or_else(|| format!("Papirus-{}", capitalize(mode)), str::to_owned);
     let input = format!("[/]\ngtk-theme='adw-gtk3-dark'\ncolor-scheme='prefer-{mode}'\nicon-theme='{icon}'\n");
-    let mut child = Command::new("dconf")
-        .args(["load", "/org/gnome/desktop/interface/"])
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(e2s)?;
-    let _ = child.stdin.take().expect("piped").write_all(input.as_bytes());
-    child.wait().map_err(e2s)?;
+    // Most runs only change colours, so skip dconf when the settings are the ones it last loaded
+    let last = p.c_state.join("dconf.txt");
+    if fs::read_to_string(&last).ok().as_deref() != Some(&input) {
+        let mut child = Command::new("dconf")
+            .args(["load", "/org/gnome/desktop/interface/"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(e2s)?;
+        let _ = child.stdin.take().expect("piped").write_all(input.as_bytes());
+        if child.wait().map_err(e2s)?.success() {
+            write(last, &input)?;
+        }
+    }
     sync_papirus(p, col(c, "primary"))
 }
 
@@ -589,8 +599,8 @@ pub fn apply_colours(p: &Paths, cfg: &Config, s: &Scheme) -> io::Result<()> {
             sc.spawn(move || log("apply_hypr", apply_hypr(p, &conf)));
         }
         if on("enableDiscord") {
-            let (scss, clients) = (gen_scss(c), &clients);
-            sc.spawn(move || log("apply_discord", apply_discord(p, &scss, clients)));
+            let clients = &clients;
+            sc.spawn(move || log("apply_discord", apply_discord(p, c, clients)));
         }
         // (config key, fn name, template, add '#', destination, extra replacements, app to signal)
         let simple = [

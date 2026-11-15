@@ -43,7 +43,7 @@ impl Paths {
         let pictures = dir("XDG_PICTURES_DIR", "Pictures");
         let wallpapers = env::var_os("CAELESTIA_WALLPAPERS_DIR")
             .map_or_else(|| pictures.join("Wallpapers"), |v| Path::new(&v).components().collect());
-        // The Python package's own data dir, so templates, schemes and the sass argv are identical
+        // Templates and static schemes from this checkout, through a path fixed at build time
         let cli_data = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("src/caelestia/data");
         Paths {
             c_config: config.join("caelestia"),
@@ -258,21 +258,6 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
     r
 }
 
-/// `tempfile.mkdtemp(suffix)` in `$TMPDIR` (or /tmp).
-pub fn make_temp_dir(suffix: &str) -> io::Result<PathBuf> {
-    let base = env::var_os("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    loop {
-        let d = base.join(format!("tmp{}{suffix}", rand_name()));
-        match fs::DirBuilder::new().mode(0o700).create(&d) {
-            Ok(()) => return Ok(d),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-use std::os::unix::fs::DirBuilderExt;
-
 /// `paths.compute_hash`: sha256 hex of a file's contents.
 pub fn hash_file(p: &Path) -> io::Result<String> {
     let mut f = File::open(p)?;
@@ -285,7 +270,40 @@ pub fn hash_file(p: &Path) -> io::Result<String> {
         }
         h.update(&buf[..n]);
     }
-    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hex(&h.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `hash_file`, remembered in `memo` (one small file per path) until the file's inode, size, mtime or
+/// ctime changes, so big wallpapers and videos are not read again on every run.
+pub fn hash_file_cached(memo: &Path, p: &Path) -> io::Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = fs::metadata(p)?;
+    let stamp = format!(
+        "{} {} {} {}.{} {}.{}",
+        m.dev(),
+        m.ino(),
+        m.len(),
+        m.mtime(),
+        m.mtime_nsec(),
+        m.ctime(),
+        m.ctime_nsec()
+    );
+    let key = memo.join(hex(&Sha256::digest(std::path::absolute(p)?.as_os_str().as_encoded_bytes())));
+    if let Ok(s) = fs::read_to_string(&key)
+        && let Some((st, h)) = s.rsplit_once(' ')
+        && st == stamp
+        && h.len() == 64
+    {
+        return Ok(h.to_owned());
+    }
+    // Stamped before reading, so a file changed mid-hash is hashed again next time
+    let h = hash_file(p)?;
+    let _ = atomic_write(&key, format!("{stamp} {h}"));
+    Ok(h)
 }
 
 /// `shutil.which(cmd) is not None`.

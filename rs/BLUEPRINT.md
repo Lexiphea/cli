@@ -43,6 +43,7 @@ Baseline (sandbox, median of 15, `rs/bench.sh`), before any Rust existed:
 
 External floor: `sass` (Discord theme) takes about 9 ms and `dconf` about 2.5 ms. Both run on every
 theme apply, so `scheme set` and `wallpaper -f` can't go below about 10 ms in any language.
+(Later the Rust build dropped `sass` and skips an unchanged `dconf`; see Results.)
 
 Latent bugs found in the Python (ported as-is, not fixed):
 
@@ -133,24 +134,41 @@ Extra check: `imagesize` (used for the `-r` size filter) and Pillow give identic
 ## Results
 
 `rs/bench.sh 21`, sandbox, median ms, warm caches. "Original" is upstream's Python as first vendored;
-"tuned" is the last pure-Python version (lazy imports, parallel theme writes, no fsync).
+"tuned" is the last pure-Python version (lazy imports, parallel theme writes, no fsync). "First
+Rust" is the straight port; "Rust" adds the optimizations below.
 
-| command | original Python | tuned Python | Rust | vs original |
-| --- | --- | --- | --- | --- |
-| spawn floor | 0.31 | 0.27 | 0.28 | |
-| `scheme get` | 50.8 | 30.8 | 0.60 | 85x |
-| `scheme list` | 52.9 | 31.6 | 1.8 | 29x |
-| `scheme set --notify -m dark` | 75.5 | 42.8 | 8.4 | 9x |
-| `wallpaper -p <jpg>` | 52.4 | 32.8 | 2.0 | 27x |
-| `wallpaper -f <jpg>` | 77.9 | 44.8 | 10.0 | 7.8x |
-| `wallpaper -f <mp4>` | not supported | 51.0 | 15.9 | 3.2x vs tuned |
-| `wallpaper -r <dir> -n` | 76.8 | 45.0 | 9.7 | 7.9x |
+| command | original Python | tuned Python | first Rust | Rust | vs original |
+| --- | --- | --- | --- | --- | --- |
+| spawn floor | 0.31 | 0.27 | 0.28 | 0.31 | |
+| `scheme get` | 50.8 | 30.8 | 0.60 | 0.60 | 85x |
+| `scheme list` | 52.9 | 31.6 | 1.8 | 1.8 | 29x |
+| `scheme set --notify -m dark` | 75.5 | 42.8 | 7.5 | 2.2 | 34x |
+| `wallpaper -p <jpg>` | 52.4 | 32.8 | 2.0 | 0.64 | 82x |
+| `wallpaper -f <jpg>` | 77.9 | 44.8 | 9.0 | 2.2 | 36x |
+| `wallpaper -f <mp4>` | not supported | 51.0 | 15.0 | 2.3 | 23x vs tuned |
+| `wallpaper -r <dir> -n` | 76.8 | 45.0 | 9.0 | 2.2 | 34x |
+
+Optimizations after the port:
+
+- The Discord theme is a plain CSS template (`templates/discord.css`) filled in Rust, instead of a
+  `sass` run (about 5 ms). Its lightness and alpha fields follow Sass's `color.scale` and
+  `color.change`; values land within half a step of Sass's (Sass printed percentages, Rust rounds
+  to hex). `dart-sass` is no longer a dependency.
+- `dconf load` only runs when its input (mode, icon theme) differs from the last successful load,
+  remembered in `~/.local/state/caelestia/dconf.txt`. A real load costs about 2.7 ms. If something
+  else changes those GNOME settings, delete that file to have the next apply load them again.
+- Wallpaper hashes are remembered in `~/.cache/caelestia/hashes/`, one file per path, keyed on
+  device, inode, size, mtime and ctime. Warm `-p` on a 180 MB video: 84 → 0.8 ms.
+- Thumbnails sample the decoded image directly instead of converting all of it to RGB first, and
+  `rs/.cargo/config.toml` builds for the local CPU (`target-cpu=native`). Thumbnails, smart options
+  and schemes stayed byte-identical on all 67 still wallpapers. New wallpapers save 5-7 ms (rq6qp7
+  116 → 109, 1351642.png 54 → 50, 914314.jpg 26 → 20 ms); decoding dominates the rest.
 
 New wallpaper (empty cache, `wallpaper -p`, median of 5, ms): 4K PNG 198 / 184 / 34; 2000x1366
 JPEG 118 / 104 / 33; MP4 not supported / 967 / 831 (ffmpeg's first frame dominates).
 
-`set`/`-f`/`-r` sit on the `sass` floor (about 9 ms); `-p` and `-f` also hash the wallpaper
-(SHA-NI; about 7 ms for the 11 MB video).
+What's left on `set`/`-f`/`-r` is mostly writing about 20 theme files and spawning the notify,
+reload and hook processes.
 
 PGO (`-Cprofile-generate`, 30 representative runs, `llvm-profdata merge`, `-Cprofile-use`): no
 measurable gain. Two interleaved rounds of 31 runs each landed within ±0.2 ms of the plain build

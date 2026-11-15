@@ -31,12 +31,12 @@ if [[ $n == dconf || ($n == sudo && $2 == tee) ]]; then
 fi
 echo "$line" >> "$SHIM_LOG"
 case $n in
-    sass | ffmpeg | ffprobe) exec "/usr/bin/$n" "$@" ;;
+    ffmpeg | ffprobe) exec "/usr/bin/$n" "$@" ;;
 esac
 exit 0
 EOF
     chmod +x "$BIN/_shim"
-    for c in dconf killall sass notify-send sudo papirus-folders ffmpeg ffprobe chromium; do
+    for c in dconf killall notify-send sudo papirus-folders ffmpeg ffprobe chromium; do
         ln -s _shim "$BIN/$c"
     done
 }

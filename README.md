@@ -7,7 +7,6 @@ the Caelestia dotfiles. Same commands, config and templates; no Python. It lives
 <details><summary id="dependencies">External dependencies</summary>
 
 - [`libnotify`](https://gitlab.gnome.org/GNOME/libnotify) - sending notifications
-- [`dart-sass`](https://github.com/sass/dart-sass) - discord theming
 - [`wl-clipboard`](https://github.com/bugaevc/wl-clipboard) - copying to clipboard
 - [`slurp`](https://github.com/emersion/slurp) - selecting a recording area
 - [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about) - screen recording

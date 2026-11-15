@@ -1,8 +1,8 @@
 //! Wallpapers, ported from the Python CLI's `utils/wallpaper.py` and `subcommands/wallpaper.py`.
 
 use crate::scheme::{Ctx, Effect, Stop, fail};
-use crate::util::{atomic_write, dumps, hash_file, hypr_json, rand_below};
-use image::{ImageFormat, ImageReader, RgbImage};
+use crate::util::{atomic_write, dumps, hash_file_cached, hypr_json, rand_below};
+use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader, Pixel, RgbImage};
 use jpeg_encoder::{ChromaSubsamplingMethod, ColorType, Encoder, SamplingFactor};
 use material_colors::color::Rgb;
 use material_colors::hct::Hct;
@@ -45,14 +45,15 @@ fn cache_dir(ctx: &Ctx, wall: &Path) -> Result<PathBuf, Stop> {
 }
 
 fn fill_cache(walls: &Path, wall: &Path) -> io::Result<PathBuf> {
+    let memo = walls.with_file_name("hashes");
     let mut image = wall.to_path_buf();
-    let mut cache = walls.join(hash_file(wall)?);
+    let mut cache = walls.join(hash_file_cached(&memo, wall)?);
     if is_animated(wall) {
         image = cache.join("first_frame.png");
         if !image.exists() {
             first_frame(wall, &image)?;
         }
-        cache = walls.join(hash_file(&image)?);
+        cache = walls.join(hash_file_cached(&memo, &image)?);
     }
     let thumb = cache.join("thumbnail.jpg");
     if !thumb.exists() {
@@ -68,7 +69,7 @@ fn fill_cache(walls: &Path, wall: &Path) -> io::Result<PathBuf> {
         atomic_write(&thumb, jpg)?;
     }
     if smart_opts(&cache).is_err() {
-        let (variant, mode) = smart(&decode(&thumb)?);
+        let (variant, mode) = smart(&decode(&thumb)?.into_rgb8());
         let mut m = Map::new();
         m.insert("variant".into(), variant.into());
         m.insert("mode".into(), mode.into());
@@ -77,8 +78,8 @@ fn fill_cache(walls: &Path, wall: &Path) -> io::Result<PathBuf> {
     Ok(cache)
 }
 
-fn decode(p: &Path) -> io::Result<RgbImage> {
-    Ok(ImageReader::open(p)?.with_guessed_format()?.decode().map_err(io::Error::other)?.into_rgb8())
+fn decode(p: &Path) -> io::Result<DynamicImage> {
+    ImageReader::open(p)?.with_guessed_format()?.decode().map_err(io::Error::other)
 }
 
 /// A video's first frame through ffmpeg, or a GIF's from its own decoder, as PNG.
@@ -96,17 +97,18 @@ fn first_frame(wall: &Path, out: &Path) -> io::Result<()> {
         return if ok { Ok(()) } else { Err(io::Error::other("ffmpeg failed")) };
     }
     let mut png = Vec::new();
-    decode(wall)?.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).map_err(io::Error::other)?;
+    decode(wall)?.into_rgb8().write_to(&mut Cursor::new(&mut png), ImageFormat::Png).map_err(io::Error::other)?;
     atomic_write(out, png)
 }
 
 /// Pillow's `thumbnail((128, 128), NEAREST)`: fit in 128x128 keeping the aspect ratio, taking the
-/// nearest source pixel with Pillow's exact sampling positions.
-fn thumbnail(img: RgbImage) -> RgbImage {
+/// nearest source pixel with Pillow's exact sampling positions. Samples the decoded image as is, since
+/// converting all of a 4K image to RGB first costs more than the sampling.
+fn thumbnail(img: DynamicImage) -> RgbImage {
     const MAX: f64 = 128.0;
     let (w, h) = img.dimensions();
     if f64::from(w) <= MAX && f64::from(h) <= MAX {
-        return img;
+        return img.into_rgb8();
     }
     let aspect = f64::from(w) / f64::from(h);
     // The floor or ceiling of `n` whose ratio is closer to the aspect (the floor on a tie), at least 1
@@ -119,7 +121,7 @@ fn thumbnail(img: RgbImage) -> RgbImage {
         (MAX as u32, round(MAX / aspect, &|n| if n == 0.0 { 0.0 } else { (aspect - MAX / n).abs() }))
     };
     if (tw, th) == (w, h) {
-        return img;
+        return img.into_rgb8();
     }
     // ImagingScaleAffine: positions start half a step in and accumulate step by step
     let positions = |from: u32, to: u32| -> Vec<u32> {
@@ -134,7 +136,7 @@ fn thumbnail(img: RgbImage) -> RgbImage {
             .collect()
     };
     let (xs, ys) = (positions(w, tw), positions(h, th));
-    RgbImage::from_fn(tw, th, |x, y| *img.get_pixel(xs[x as usize], ys[y as usize]))
+    RgbImage::from_fn(tw, th, |x, y| img.get_pixel(xs[x as usize], ys[y as usize]).to_rgb())
 }
 
 /// `get_smart_opts`: (variant, mode). The variant follows how colourful the thumbnail is; the mode

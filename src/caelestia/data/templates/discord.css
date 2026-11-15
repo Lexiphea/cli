@@ -9,9 +9,6 @@
  * @authorLink https://www.refact0r.dev
 */
 
-@use "sass:color";
-@use "colours" as c;
-
 @import url("https://refact0r.github.io/midnight-discord/build/midnight.css");
 
 body {
@@ -71,7 +68,7 @@ body {
     --remove-bg-layer: off; /* turn on to remove the base --bg-3 layer for use with window transparency (WILL OVERRIDE BACKGROUND IMAGE) */
     --panel-blur: off; /* turn on to blur the background of panels */
     --blur-amount: 12px; /* amount of blur */
-    --bg-floating: #{c.$surface}; /* you can set this to a more opaque color if floating panels look too transparent */
+    --bg-floating: {{ $surface }}; /* you can set this to a more opaque color if floating panels look too transparent */
 
     /* chatbar options */
     --custom-chatbar: off; /* off: default chatbar, separated: chatbar separated from chat */
@@ -86,22 +83,22 @@ body {
     --colors: on; /* turn off to use discord default colors */
 
     /* text colors */
-    --text-0: #{c.$onPrimary}; /* text on colored elements */
-    --text-1: #{color.scale(c.$onSurface, $lightness: 10%)}; /* bright text on colored elements */
-    --text-2: #{color.scale(c.$onSurface, $lightness: 5%)}; /* headings and important text */
-    --text-3: #{c.$onSurface}; /* normal text */
-    --text-4: #{c.$outline}; /* icon buttons and channels */
-    --text-5: #{c.$outline}; /* muted channels/chats and timestamps */
+    --text-0: {{ $onPrimary }}; /* text on colored elements */
+    --text-1: {{ $onSurface lightness 10 }}; /* bright text on colored elements */
+    --text-2: {{ $onSurface lightness 5 }}; /* headings and important text */
+    --text-3: {{ $onSurface }}; /* normal text */
+    --text-4: {{ $outline }}; /* icon buttons and channels */
+    --text-5: {{ $outline }}; /* muted channels/chats and timestamps */
 
     /* background and dark colors */
-    --bg-1: #{c.$surfaceContainerHighest}; /* dark buttons when clicked */
-    --bg-2: #{c.$surfaceContainerHigh}; /* dark buttons */
-    --bg-3: #{c.$surface}; /* spacing, secondary elements */
-    --bg-4: #{c.$surfaceContainer}; /* main background color */
-    --hover: #{color.change(c.$onSurface, $alpha: 0.08)}; /* channels and buttons when hovered */
-    --active: #{color.change(c.$onSurface, $alpha: 0.1)}; /* channels and buttons when clicked or selected */
-    --active-2: #{color.change(c.$onSurface, $alpha: 0.2)}; /* extra state for transparent buttons */
-    --message-hover: #{color.change(c.$onSurface, $alpha: 0.08)}; /* messages when hovered */
+    --bg-1: {{ $surfaceContainerHighest }}; /* dark buttons when clicked */
+    --bg-2: {{ $surfaceContainerHigh }}; /* dark buttons */
+    --bg-3: {{ $surface }}; /* spacing, secondary elements */
+    --bg-4: {{ $surfaceContainer }}; /* main background color */
+    --hover: {{ $onSurface alpha 0.08 }}; /* channels and buttons when hovered */
+    --active: {{ $onSurface alpha 0.1 }}; /* channels and buttons when clicked or selected */
+    --active-2: {{ $onSurface alpha 0.2 }}; /* extra state for transparent buttons */
+    --message-hover: {{ $onSurface alpha 0.08 }}; /* messages when hovered */
 
     /* accent colors */
     --accent-1: var(--blue-1); /* links and other accent text */
@@ -109,7 +106,7 @@ body {
     --accent-3: var(--blue-3); /* accent buttons */
     --accent-4: var(--blue-4); /* accent buttons when hovered */
     --accent-5: var(--blue-5); /* accent buttons when clicked */
-    --accent-new: #{c.$error}; /* stuff that's normally red like mute/deafen buttons */
+    --accent-new: {{ $error }}; /* stuff that's normally red like mute/deafen buttons */
     --mention: linear-gradient(
         to right,
         color-mix(in hsl, var(--blue-2), transparent 90%) 40%,
@@ -139,38 +136,38 @@ body {
     --offline: var(--text-4); /* change to #83838b for default offline color */
 
     /* border colors */
-    --border-light: #{color.change(c.$outline, $alpha: 0)}; /* light border color */
-    --border: #{color.change(c.$outline, $alpha: 0.2)}; /* normal border color */
-    --button-border: #{color.change(c.$outline, $alpha: 0)}; /* neutral border color of buttons */
+    --border-light: {{ $outline alpha 0 }}; /* light border color */
+    --border: {{ $outline alpha 0.2 }}; /* normal border color */
+    --button-border: {{ $outline alpha 0 }}; /* neutral border color of buttons */
 
     /* base colors */
-    --red-1: #{c.$error};
-    --red-2: #{color.scale(c.$error, $lightness: -5%)};
-    --red-3: #{color.scale(c.$error, $lightness: -10%)};
-    --red-4: #{color.scale(c.$error, $lightness: -15%)};
-    --red-5: #{color.scale(c.$error, $lightness: -20%)};
+    --red-1: {{ $error }};
+    --red-2: {{ $error lightness -5 }};
+    --red-3: {{ $error lightness -10 }};
+    --red-4: {{ $error lightness -15 }};
+    --red-5: {{ $error lightness -20 }};
 
-    --green-1: #{c.$green};
-    --green-2: #{color.scale(c.$green, $lightness: -5%)};
-    --green-3: #{color.scale(c.$green, $lightness: -10%)};
-    --green-4: #{color.scale(c.$green, $lightness: -15%)};
-    --green-5: #{color.scale(c.$green, $lightness: -20%)};
+    --green-1: {{ $green }};
+    --green-2: {{ $green lightness -5 }};
+    --green-3: {{ $green lightness -10 }};
+    --green-4: {{ $green lightness -15 }};
+    --green-5: {{ $green lightness -20 }};
 
-    --blue-1: #{c.$primary};
-    --blue-2: #{color.scale(c.$primary, $lightness: -5%)};
-    --blue-3: #{color.scale(c.$primary, $lightness: -10%)};
-    --blue-4: #{color.scale(c.$primary, $lightness: -15%)};
-    --blue-5: #{color.scale(c.$primary, $lightness: -20%)};
+    --blue-1: {{ $primary }};
+    --blue-2: {{ $primary lightness -5 }};
+    --blue-3: {{ $primary lightness -10 }};
+    --blue-4: {{ $primary lightness -15 }};
+    --blue-5: {{ $primary lightness -20 }};
 
-    --yellow-1: #{c.$yellow};
-    --yellow-2: #{color.scale(c.$yellow, $lightness: -5%)};
-    --yellow-3: #{color.scale(c.$yellow, $lightness: -10%)};
-    --yellow-4: #{color.scale(c.$yellow, $lightness: -15%)};
-    --yellow-5: #{color.scale(c.$yellow, $lightness: -20%)};
+    --yellow-1: {{ $yellow }};
+    --yellow-2: {{ $yellow lightness -5 }};
+    --yellow-3: {{ $yellow lightness -10 }};
+    --yellow-4: {{ $yellow lightness -15 }};
+    --yellow-5: {{ $yellow lightness -20 }};
 
-    --purple-1: #{c.$mauve};
-    --purple-2: #{color.scale(c.$mauve, $lightness: -5%)};
-    --purple-3: #{color.scale(c.$mauve, $lightness: -10%)};
-    --purple-4: #{color.scale(c.$mauve, $lightness: -15%)};
-    --purple-5: #{color.scale(c.$mauve, $lightness: -20%)};
+    --purple-1: {{ $mauve }};
+    --purple-2: {{ $mauve lightness -5 }};
+    --purple-3: {{ $mauve lightness -10 }};
+    --purple-4: {{ $mauve lightness -15 }};
+    --purple-5: {{ $mauve lightness -20 }};
 }
