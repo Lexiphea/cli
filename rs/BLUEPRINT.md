@@ -64,7 +64,7 @@ Latent bugs found in the Python (ported as-is, not fixed):
 
 One binary crate, `rs/` (edition 2024). Deps: `serde_json` (`preserve_order`, parsing only),
 `sha2` (SHA-NI file hashing for cache keys), `imagesize` (image headers for the `-r` size filter),
-`image` (decoding, thumbnails) and `material-colors` (quantizer, scoring, dynamic schemes).
+`image` (decoding), `jpeg-encoder` (thumbnails) and `material-colors` (quantizer, scoring, dynamic schemes).
 No clap (hand-rolled argv, about 100 lines). `unsafe`: only `setsid()` (`util::new_session`) for
 the detached papirus-folders, recorder and xdg-open calls. The flock uses std's `File::lock`.
 
@@ -163,10 +163,12 @@ flavours x 2 modes each):
   Python uses `t_max_c`, so that scheme gets a dark container instead of a light one. The four Dim
   colours also differ on 2021-spec variants (the crate uses the newer `Darker` pair rule); nothing
   uses them.
-- From an empty cache: the quantizer differs from Python's C++ one, so the best colour moves (median
-  3.8 degrees of hue; 8 of 75 pick a different dominant colour). Python moves by up to 121 degrees
-  itself when the thumbnail is decoded by Pillow instead of stb, so the pick was already fragile.
-  Smart options differ for 3 of 75.
+- From an empty cache: thumbnails are saved like Pillow saves them (quality 75, chroma averaged
+  over 2x2 blocks, via `jpeg-encoder`). With full-resolution chroma, 8 of 75 wallpapers picked a
+  different dominant colour, because Pillow's averaging is what tips those picks. Now: smart options
+  match for 75/75, median hue shift 1.5 degrees, 4 of 75 pick another colour. Those 4 flip on
+  the quantizer (the crate's vs Python's C++ one) or on DCT rounding in the JPEG; Python flips on
+  inputs that small too (up to 121 degrees when the thumbnail is decoded by Pillow instead of stb).
 - Speed: a new still wallpaper takes 0.03-0.04 s (Python: 0.08-0.15 s plus interpreter startup).
 
 ## Skill stages

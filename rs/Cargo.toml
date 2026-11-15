@@ -8,6 +8,7 @@ license = "GPL-3.0-only"
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff"] }
 imagesize = "0.14"
+jpeg-encoder = "0.7"
 material-colors = { version = "0.5", features = ["quantize"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"

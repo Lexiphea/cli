@@ -2,8 +2,8 @@
 
 use crate::scheme::{Ctx, Effect, Stop, fail};
 use crate::util::{atomic_write, dumps, hash_file, hypr_json, rand_below};
-use image::codecs::jpeg::JpegEncoder;
 use image::{ImageFormat, ImageReader, RgbImage};
+use jpeg_encoder::{ChromaSubsamplingMethod, ColorType, Encoder, SamplingFactor};
 use material_colors::color::Rgb;
 use material_colors::hct::Hct;
 use serde_json::{Map, Value};
@@ -56,10 +56,15 @@ fn fill_cache(walls: &Path, wall: &Path) -> io::Result<PathBuf> {
     }
     let thumb = cache.join("thumbnail.jpg");
     if !thumb.exists() {
+        // As Pillow saves it: quality 75, chroma averaged over 2x2 blocks (4:2:0). That averaging
+        // shifts the best colour on some wallpapers, so it matters for matching Python's picks.
+        let small = thumbnail(decode(&image)?);
         let mut jpg = Vec::new();
-        JpegEncoder::new_with_quality(&mut jpg, 75)
-            .encode_image(&thumbnail(decode(&image)?))
-            .map_err(io::Error::other)?;
+        let mut enc = Encoder::new(&mut jpg, 75);
+        enc.set_sampling_factor(SamplingFactor::R_4_2_0);
+        enc.set_chroma_subsampling_method(ChromaSubsamplingMethod::Average);
+        let size = |n: u32| u16::try_from(n).map_err(io::Error::other);
+        enc.encode(&small, size(small.width())?, size(small.height())?, ColorType::Rgb).map_err(io::Error::other)?;
         atomic_write(&thumb, jpg)?;
     }
     if smart_opts(&cache).is_err() {
